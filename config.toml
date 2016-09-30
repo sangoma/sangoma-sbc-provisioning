@@ -1,0 +1,52 @@
+# static[46], dhcp[46], slaac6
+
+[["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
+type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+address="10.10.10.2/24"             # IP address and network prefix.
+
+[["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
+type="slaac6"                        # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+hostname="sbc.ooredoo.local"        # Use this option for the DHCP server requires the client to specify a hostname before receiving an IP address. This parameter may not be required for static IP address.
+
+# Interface Port 2 to be used to connect Customer network. By default they are DHCP. Onsite engineer can provision them fixed IP as well.
+
+[["eth1"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
+type="dhcp4"                        # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+hostname="sip.ooredoo.local"        # Use this option for the DHCP server requires the client to specify a hostname before receiving an IP address. This parameter may not be required for static IP address.
+use_auto_dns="true"                 # Use the DNS servers returns from DHCP server. Values are true or false
+persistant_dhcp="true"              # Keep retrying to get a DHCP lease indefinitely. Values are true or false
+
+[["eth1"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
+type="dhcp6"                        # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+hostname="sip.ooredoo.local"        # Use this option for the DHCP server requires the client to specify a hostname before receiving an IP address. This parameter may not be required for static IP address.
+use_auto_dns="true"                 # Use the DNS servers returns from DHCP server. Values are true or false
+persistant_dhcp="true"              # Keep retrying to get a DHCP lease indefinitely. Values are true or false
+
+# Interface Port 3 to be used to connect EMS/OAM/SSW/Core network of Ooredoo. Two vlans on same ethernet cable. One for EMS and another for SIP Trunks.
+
+[["eth2.80"]]                       # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
+type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+address="192.168.10.6/30"           # IP address and network prefix.
+
+"route.EMS" = { addr = "192.168.10.0/30", via = "192.168.10.5" } # route 1. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
+"route.OAM" = { addr = "172.16.0.0/16", via = "192.168.10.5" }   # route 2. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
+
+[["eth2.81"]]                       # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
+type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+address="10.11.1.10/30"             # IP address and network prefix.
+
+"route.SSW1" = { addr = "10.11.1.0/30", via = "10.11.1.9" } # route 3. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
+"route.SSW2" = { addr = "10.21.1.0/30", via = "10.11.1.9" } # route 4. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
+"route.CORE" = { addr = "10.11.0.0/16", via = "10.11.1.9" } # route 5. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
+
+# Global network settings.
+
+[global]
+hostname="ooredoo.local"      # Host Name should be the Fully Qualified Domain Name (FQDN), such as hostname.expample.com.
+gw_interface="eth0"           # Default Gateway Interface is the gateway device, such as eth0. Configure this option if you have multiple interfaces on the same subnet, and require one of those interfaces to be the preferred route to the default gateway.
+gw_ipv4="10.10.10.1"          # IPV4 address of the network's gateway.
+gw_ipv6=""                    # IPV6 address of the network's gateway.
+dns1="8.8.8.8"                # Static Name server IP address.
+dns2="8.8.4.4"
+dns3=""
+dns4=""

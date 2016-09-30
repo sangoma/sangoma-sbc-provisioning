@@ -1,0 +1,244 @@
+"""
+Tests for `attr._funcs`.
+"""
+
+from __future__ import absolute_import, division, print_function
+
+from collections import OrderedDict, Sequence, Mapping
+
+import pytest
+
+from hypothesis import given, strategies as st
+
+from .utils import simple_classes, nested_classes
+
+from attr._funcs import (
+    asdict,
+    assoc,
+    has,
+)
+from attr._make import (
+    attr,
+    attributes,
+    fields,
+)
+
+MAPPING_TYPES = (dict, OrderedDict)
+SEQUENCE_TYPES = (list, tuple)
+
+
+class TestAsDict(object):
+    """
+    Tests for `asdict`.
+    """
+    @given(st.sampled_from(MAPPING_TYPES))
+    def test_shallow(self, C, dict_factory):
+        """
+        Shallow asdict returns correct dict.
+        """
+        assert {
+            "x": 1,
+            "y": 2,
+        } == asdict(C(x=1, y=2), False, dict_factory=dict_factory)
+
+    @given(st.sampled_from(MAPPING_TYPES))
+    def test_recurse(self, C, dict_class):
+        """
+        Deep asdict returns correct dict.
+        """
+        assert {
+            "x": {"x": 1, "y": 2},
+            "y": {"x": 3, "y": 4},
+        } == asdict(C(
+            C(1, 2),
+            C(3, 4),
+        ), dict_factory=dict_class)
+
+    @given(nested_classes, st.sampled_from(MAPPING_TYPES))
+    def test_recurse_property(self, cls, dict_class):
+        """
+        Property tests for recursive asdict.
+        """
+        obj = cls()
+        obj_dict = asdict(obj, dict_factory=dict_class)
+
+        def assert_proper_dict_class(obj, obj_dict):
+            assert isinstance(obj_dict, dict_class)
+            for field in fields(obj.__class__):
+                field_val = getattr(obj, field.name)
+                if has(field_val.__class__):
+                    # This field holds a class, recurse the assertions.
+                    assert_proper_dict_class(field_val, obj_dict[field.name])
+                elif isinstance(field_val, Sequence):
+                    dict_val = obj_dict[field.name]
+                    for item, item_dict in zip(field_val, dict_val):
+                        if has(item.__class__):
+                            assert_proper_dict_class(item, item_dict)
+                elif isinstance(field_val, Mapping):
+                    # This field holds a dictionary.
+                    assert isinstance(obj_dict[field.name], dict_class)
+                    for key, val in field_val.items():
+                        if has(val.__class__):
+                            assert_proper_dict_class(val,
+                                                     obj_dict[field.name][key])
+
+        assert_proper_dict_class(obj, obj_dict)
+
+    @given(st.sampled_from(MAPPING_TYPES))
+    def test_filter(self, C, dict_factory):
+        """
+        Attributes that are supposed to be skipped are skipped.
+        """
+        assert {
+            "x": {"x": 1},
+        } == asdict(C(
+            C(1, 2),
+            C(3, 4),
+        ), filter=lambda a, v: a.name != "y", dict_factory=dict_factory)
+
+    @given(container=st.sampled_from(SEQUENCE_TYPES))
+    def test_lists_tuples(self, container, C):
+        """
+        If recurse is True, also recurse into lists.
+        """
+        assert {
+            "x": 1,
+            "y": [{"x": 2, "y": 3}, {"x": 4, "y": 5}, "a"],
+        } == asdict(C(1, container([C(2, 3), C(4, 5), "a"])))
+
+    @given(container=st.sampled_from(SEQUENCE_TYPES))
+    def test_lists_tuples_retain_type(self, container, C):
+        """
+        If recurse and retain_collection_types are True, also recurse
+        into lists and do not convert them into list.
+        """
+        assert {
+            "x": 1,
+            "y": container([{"x": 2, "y": 3}, {"x": 4, "y": 5}, "a"]),
+        } == asdict(C(1, container([C(2, 3), C(4, 5), "a"])),
+                    retain_collection_types=True)
+
+    @given(st.sampled_from(MAPPING_TYPES))
+    def test_dicts(self, C, dict_factory):
+        """
+        If recurse is True, also recurse into dicts.
+        """
+        res = asdict(C(1, {"a": C(4, 5)}), dict_factory=dict_factory)
+        assert {
+            "x": 1,
+            "y": {"a": {"x": 4, "y": 5}},
+        } == res
+        assert isinstance(res, dict_factory)
+
+    @given(simple_classes, st.sampled_from(MAPPING_TYPES))
+    def test_roundtrip(self, cls, dict_class):
+        """
+        Test dumping to dicts and back for Hypothesis-generated classes.
+        """
+        instance = cls()
+        dict_instance = asdict(instance, dict_factory=dict_class)
+
+        assert isinstance(dict_instance, dict_class)
+
+        roundtrip_instance = cls(**dict_instance)
+
+        assert instance == roundtrip_instance
+
+    @given(simple_classes)
+    def test_asdict_preserve_order(self, cls):
+        """
+        Field order should be preserved when dumping to OrderedDicts.
+        """
+        instance = cls()
+        dict_instance = asdict(instance, dict_factory=OrderedDict)
+
+        assert [a.name for a in fields(cls)] == list(dict_instance.keys())
+
+
+class TestHas(object):
+    """
+    Tests for `has`.
+    """
+    def test_positive(self, C):
+        """
+        Returns `True` on decorated classes.
+        """
+        assert has(C)
+
+    def test_positive_empty(self):
+        """
+        Returns `True` on decorated classes even if there are no attributes.
+        """
+        @attributes
+        class D(object):
+            pass
+
+        assert has(D)
+
+    def test_negative(self):
+        """
+        Returns `False` on non-decorated classes.
+        """
+        assert not has(object)
+
+
+class TestAssoc(object):
+    """
+    Tests for `assoc`.
+    """
+    def test_empty(self):
+        """
+        Empty classes without changes get copied.
+        """
+        @attributes
+        class C(object):
+            pass
+
+        i1 = C()
+        i2 = assoc(i1)
+
+        assert i1 is not i2
+        assert i1 == i2
+
+    def test_no_changes(self, C):
+        """
+        No changes means a verbatim copy.
+        """
+        i1 = C(1, 2)
+        i2 = assoc(i1)
+
+        assert i1 is not i2
+        assert i1 == i2
+
+    def test_change(self, C):
+        """
+        Changes work.
+        """
+        i = assoc(C(1, 2), x=42)
+        assert C(42, 2) == i
+
+    def test_unknown(self, C):
+        """
+        Wanting to change an unknown attribute raises a ValueError.
+        """
+        @attributes
+        class C(object):
+            x = attr()
+            y = 42
+
+        with pytest.raises(ValueError) as e:
+            assoc(C(1), y=2)
+        assert (
+            "y is not an attrs attribute on {cls!r}.".format(cls=C),
+        ) == e.value.args
+
+    def test_frozen(self):
+        """
+        Works on frozen classes.
+        """
+        @attributes(frozen=True)
+        class C(object):
+            x = attr()
+            y = attr()
+
+        assert C(3, 2) == assoc(C(1, 2), x=3)
