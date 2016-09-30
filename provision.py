@@ -7,10 +7,18 @@ from attr import attrs, attrib, Factory, asdict
 import safe
 import toml
 import sys
+import os
 
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+DEBUG_MODE = os.getenv('DEBUG') not in ['0', None ]
+
+logging.basicConfig(
+    format='[%(levelname)s] %(message)s',
+    level=logging.DEBUG if DEBUG_MODE else logging.WARNING
+)
+
+logger = logging.getLogger()
 
 class Failure(Exception):
     pass
@@ -148,7 +156,7 @@ class Config(object):
 
     def __init__(self, data):
         self.general = ConfigNetwork(data['global'])
-        print(self.general)
+        logger.debug('General network configuration: {!s}'.format(self.general))
 
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
@@ -166,8 +174,9 @@ class Config(object):
                 raise Failure('configuration error: did you forget the double square brackets on "{}"?'.format(cfgdata))
 
         self.ips = ips
+        logger.debug('IP configuration: {!s}'.format(self.ips))
         self.routes = routes
-        print(self.ips)
+        logger.debug('Route configuration: {!s}'.format(self.routes))
 
     @classmethod
     def load(cls):
@@ -177,9 +186,7 @@ class Config(object):
             return Config(data)
 
         except toml.TomlDecodeError as e:
-            print(e, file=sys.stderr)
-
-            sys.exit(1)
+            raise e
 
 ####
 
@@ -294,7 +301,7 @@ try:
                 lambda x: compare_keys(x, asdict(ip_object), check_fields),
                 lambda: "not found"))
             del network_ip_map[name]
-            print('interface {{interface}} already has a {{proto}} IP {0}, skipping creation..'.format(debug_info).format(**asdict(ip_object)))
+            print('+ Interface {{interface}} already has a {{proto}} IP {0}, skipping creation..'.format(debug_info).format(**asdict(ip_object)))
 
         except ObjectNotFound as e:
             postdata = asdict_filter(ip_object, store_fields)
@@ -331,7 +338,7 @@ try:
     for route_object in config.routes:
         try:
             name, _ = next(search_object(network_route_map, compare_routes_vlan(route_object), lambda: "not found"))
-            print('Route already present ({0}) on interface {1}, skipping creation..'.format(name, route_object.interface))
+            print('+ Route already present ({0}) on interface {1}, skipping creation..'.format(name, route_object.interface))
             del network_route_map[name]
         except ObjectNotFound as e:
             api.network.route.create(route_object.name, asdict(route_object, filter=(lambda a,_: a.name != 'name')))
@@ -343,13 +350,19 @@ try:
 
     global_options = normalize_dict(asdict(config.general))
 
-    print('Configuring new global network settings... {}'.format(str(global_options)))
+    print('Configuring new global network settings...')
 
     api.network.configuration.update(global_options)
 
+    print('Applying network changes (may take a while)..')
+
     api.network.apply()
 
+    print('Done!')
+
 except Exception as e:
-    print('ERROR: {}'.format(e), file=sys.stderr)
-    import traceback
-    traceback.print_tb(sys.exc_info()[2], file=sys.stderr)
+    print('ERROR: {}'.format(e).replace('\n', ' - '), file=sys.stderr)
+
+    if DEBUG_MODE:
+        import traceback
+        traceback.print_tb(sys.exc_info()[2], file=sys.stderr)
