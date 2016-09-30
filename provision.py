@@ -154,7 +154,7 @@ class Config(object):
     ips = attrib(Factory(list))
     routes = attrib(Factory(list))
 
-    def __init__(self, data):
+    def __init__(self, data, ifaces):
         self.general = ConfigNetwork(data['global'])
         logger.debug('General network configuration: {!s}'.format(self.general))
 
@@ -164,6 +164,10 @@ class Config(object):
             if cfgname == 'global':
                 continue
             if isinstance(cfgdata, list):
+                physname = cfgname if cfgname.find('.') == -1 else cfgname[:cfgname.find('.')]
+                logger.debug('adding {} to interfaces list...'.format(physname))
+                ifaces.add(physname)
+
                 for ipdata in cfgdata:
                     ips.append(ConfigIP(cfgname, ipdata))
 
@@ -179,11 +183,11 @@ class Config(object):
         logger.debug('Route configuration: {!s}'.format(self.routes))
 
     @classmethod
-    def load(cls):
+    def load(cls, ifaces):
         try:
             with open('config.toml') as fdes:
                 data = toml.load(fdes)
-            return Config(data)
+            return Config(data, ifaces)
 
         except toml.TomlDecodeError as e:
             raise e
@@ -199,12 +203,13 @@ IP_FIELDS_MAP = {
 ####
 
 try:
+    ifaces = set()
+
     print('Loading configuration file...')
-    config = Config.load()
+    config = Config.load(ifaces)
 
     print("Connecting to REST API...")
     api = safe.api('localhost', port=81)
-
 
     print('Loading settings from REST interface...')
 
@@ -212,6 +217,13 @@ try:
     network_iface_map = retrieve_map(api.network.interface, 'Retrieving interfaces configuration...')
     network_route_map = retrieve_map(api.network.route,     'Retrieving route configuration...')
     sip_profile_map   = retrieve_map(api.sip.profile,       'Retrieving SIP profile configuration...')
+
+    print('Validating interface list...')
+
+    missing_ifaces = [ iface for iface in ifaces if network_iface_map.get(iface) is None ]
+
+    if len(missing_ifaces) != 0:
+        raise Failure('configuration error: system does not have interface(s) "{}" - cannot proceed'.format('", "'.join(missing_ifaces)))
 
     #####
 

@@ -5,7 +5,7 @@ type="static4"                      # The protocol family type and which boot-ti
 address="10.10.10.2/24"             # IP address and network prefix.
 
 [["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
-type="slaac6"                        # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
+type="slaac6"                       # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
 hostname="sbc.ooredoo.local"        # Use this option for the DHCP server requires the client to specify a hostname before receiving an IP address. This parameter may not be required for static IP address.
 
 # Interface Port 2 to be used to connect Customer network. By default they are DHCP. Onsite engineer can provision them fixed IP as well.
