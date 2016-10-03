@@ -1,0 +1,165 @@
+#!/usr/webconfig/bin/php
+<?php
+
+class ServerRequest{
+
+    private $args;
+    
+    public function __construct($args){
+        // As we can pass config file as argument all of them are optional
+        $this->args = $args;
+        if(isset($this->args['config']))
+            // If configuration file and other params are passed, those coming
+            // from configuration file would be overrided
+            $this->args = array_merge($this->fromConfigFile($this->args['config']),$this->args);
+    }
+
+
+    public function __get($key){
+        if($key=='server' && isset($this->args[$key]))
+            return $this->args[$key];
+        return null;
+    }
+
+
+    private function parseFile($config){
+        if(preg_match('#\.ini$#',$config))
+            return parse_ini_file($config);
+        return false;
+    }
+    
+    private function fromConfigFile($config){
+        if(!stat($config)){
+            print "Error: File not found\n";
+            exit(1);
+        }else if(($params = $this->parseFile($config)))
+            return $params;
+        else{
+            print "Error: An error happens during parsing file process\n";
+            exit(1);
+        }
+    }
+
+    public function validate(){
+        $required = array('name'=>false,
+        'description'=>false,
+        'venue'=>false,
+        'ip'=>true,
+        'key'=>true,
+        'current'=>true,
+        'macid'=>true,
+        'altmacid'=>false,
+        'mediamacid'=>false,
+        'hdserial'=>false,
+        'server'=>true
+        );
+
+        foreach($required as $key => $mandatory)
+            if(!isset($this->args[$key]) && $mandatory)
+                return array(false,"Param ".$key." is required");
+        return array(true,'');
+    }
+
+    public function help(){
+        $out = "server-request --ip ipaddress --server <ip:port> --key api-key --current validation-string --macid mac-address [--name] [--description] [--venue] [--altmacid] [--mediamacid] [--hdserial] [--ca]\n";
+        $out.= "server-request --config file.ini\n";
+        $out.= "\n\t--help\t\t\tPrint this help\n";
+        $out.= "\t--ip\t\t\tIP address of the SBC (IP address of the SBC, Same IP as the one which is used for connecting to EMS)\n";
+        $out.= "\t--server\t\tServer socket where request should be sent\n";
+        $out.= "\t--key\t\t\tREST API Key\n";
+        $out.= "\t--current\t\tA string which will be provided by us as an identifier to validate the API call\n";
+        $out.= "\t--macid\t\t\tMAC Address of the primary ethernet port\n";
+        $out.= "\t--name\t\t\tAn unique name for the SBC\n";
+        $out.= "\t--description\t\tDescription for the particular SBC\n";
+        $out.= "\t--venue\t\t\tinformation on the location of the SBC\n";
+        $out.= "\t--altmacid\t\tMAC address of secondary ethernet port, if any\n";
+        $out.= "\t--mediamacid\t\tMAC Address of media interface\n";
+        $out.= "\t--hdserial\t\tSerial Number of Harddisk\n";      
+        $out.= "\t--ca\t\t\tPem file for secure connection. If not pressent uses http request instead of https\n";
+        $out.= "\t--config\t\tConfig file .ini with all needed parameters. Command line parameter overrides same parameter on config file\n";
+        return $out;
+    }
+
+    public function send(){
+        $options = array();
+        $hasca = false;
+        $server_socket = $this->server;
+        if(isset($this->args['ca'])){
+            $hasca = true;
+            $options[CURLOPT_CAINFO]=$this->args['ca'];
+            unset($this->args['ca']);
+        }
+        unset($this->args['server']);
+        unset($this->args['config']);
+        $options = array(
+            CURLOPT_RETURNTRANSFER => TRUE,
+            CURLOPT_CONNECTTIMEOUT => 5,
+            CURLOPT_TIMEOUT => 0,
+            CURLOPT_USERAGENT => "SBC - Register",
+            // TODO: server path should be passed as parameter also
+            CURLOPT_URL => $hasca? "https://".$server_socket."/devicesapi/devices/create" : "http://".$server_socket."/devicesapi/devices/create",
+            //                         CURLOPT_CAINFO => self::CACERT_FILE,            
+            CURLOPT_POST => true,
+            CURLOPT_POSTFIELDS => json_encode($this->args),
+            CURLOPT_HTTPHEADER => array('Content-Type: application/json')
+        );
+        
+        $ch = curl_init();
+        curl_setopt_array($ch, $options);
+        $data = curl_exec($ch);
+        curl_close($ch);
+        return @json_decode($data);                
+    }
+
+    public function isServerReachable(){
+        $port = preg_match('#[^:]+:([0-9]+)$#',$this->server,$match)? $match[1]
+            : 80;
+        $host = preg_match('#([^:]+)#',$this->server,$match)? $match[1] : null;
+        $timeoutInSeconds = 1;
+        $ret = false;
+        if(($fp = fsockopen($host,$port,$errno,$errstr,$timeoutInSeconds)))
+            $ret = true;
+        fclose($fp);
+        return $ret;
+    }
+    
+    public static function main(){        
+        $args = getopt("",array('config:',
+        'name:', 
+        'description:',
+        'venue:',
+        'ip:',
+        'key:',
+        'current:',
+        'macid:',
+        'altmacid:',
+        'mediamacid:',
+        'hdserial:',
+        'ca:',
+        'server:'
+        ));
+
+        $request = new ServerRequest($args);
+        if((list($status,$message)=$request->validate()) && !$status){
+            print "Error: ".$message."\n\n";
+            print $request->help()."\n";
+            exit(1);
+        }else if(!$request->isServerReachable()){
+            print "Error: Server ".$request->server." is unreachable\n\n";
+            exit(1);
+        }else if(($response = $request->send()) && isset($response['status']) && !$response['status']){
+            print isset($response['description'])? "Server Error: ".$response['description']."\n\n" :
+                "Server Error: Some kind of error happens, but server does not send back any description\n\n";
+            exit(1);
+        }else if(!$response){
+            print "Error: Connection server error\n\n";
+            exit(1);
+        }else if($response && isset($response['status']) && $response['status'])
+            print "OK: SBC was register on server\n\n";            
+    }
+}
+
+if(php_sapi_name()=='cli')
+    ServerRequest::main();
+
+?>
