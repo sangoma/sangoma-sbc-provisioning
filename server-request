@@ -1,5 +1,8 @@
 #!/usr/webconfig/bin/php
+
 <?php
+
+
 
 class ServerRequest{
 
@@ -16,7 +19,7 @@ class ServerRequest{
 
 
     public function __get($key){
-        if($key=='server' && isset($this->args[$key]))
+        if(($key=='server' || $key=='help') && isset($this->args[$key]))
             return $this->args[$key];
         return null;
     }
@@ -30,12 +33,12 @@ class ServerRequest{
     
     private function fromConfigFile($config){
         if(!stat($config)){
-            print "Error: File not found\n";
+            $this->printMessage(array('status'=>false,'type'=>'local','message'=>"Error: File not found"));
             exit(1);
         }else if(($params = $this->parseFile($config)))
             return $params;
         else{
-            print "Error: An error happens during parsing file process\n";
+            $this->printMessage(array('status'=>false,'type'=>'local','message'=>"Error: An error happens during parsing file process"));
             exit(1);
         }
     }
@@ -61,7 +64,7 @@ class ServerRequest{
     }
 
     public function help(){
-        $out = "server-request --ip ipaddress --server <ip:port> --key api-key --current validation-string --macid mac-address [--name] [--description] [--venue] [--altmacid] [--mediamacid] [--hdserial] [--ca]\n";
+        $out = "server-request --ip ipaddress --server <ip:port> --key api-key --current validation-string --macid mac-address [--name] [--description] [--venue] [--altmacid] [--mediamacid] [--hdserial] [--ca] [--help]\n";
         $out.= "server-request --config file.ini\n";
         $out.= "\n\t--help\t\t\tPrint this help\n";
         $out.= "\t--ip\t\t\tIP address of the SBC (IP address of the SBC, Same IP as the one which is used for connecting to EMS)\n";
@@ -89,6 +92,9 @@ class ServerRequest{
             $options[CURLOPT_CAINFO]=$this->args['ca'];
             unset($this->args['ca']);
         }
+        if(preg_match('#^\{"[^:]+:[^,\}]+[,\}]#',$this->args['current']))
+            $this->args['current'] = json_decode($this->args['current']);
+
         unset($this->args['server']);
         unset($this->args['config']);
         $options = array(
@@ -122,8 +128,12 @@ class ServerRequest{
         fclose($fp);
         return $ret;
     }
+
+    public static function printMessage($return){
+        print json_encode($return);
+    }
     
-    public static function main(){        
+    public static function main($argv){        
         $args = getopt("",array('config:',
         'name:', 
         'description:',
@@ -140,26 +150,27 @@ class ServerRequest{
         ));
 
         $request = new ServerRequest($args);
+        if(in_array('--help',$argv))
+            die($request->help()."\n");
         if((list($status,$message)=$request->validate()) && !$status){
-            print "Error: ".$message."\n\n";
-            print $request->help()."\n";
+            self::printMessage(array('status'=>false,'type'=>'local','message'=>"Error: ".$message));
             exit(1);
         }else if(!$request->isServerReachable()){
-            print "Error: Server ".$request->server." is unreachable\n\n";
+            self::printMessage(array('status'=>false,'type'=>'local','message'=>"Error: Server ".$request->server." is unreachable"));
             exit(1);
-        }else if(($response = $request->send()) && isset($response['status']) && !$response['status']){
-            print isset($response['description'])? "Server Error: ".$response['description']."\n\n" :
-                "Server Error: Some kind of error happens, but server does not send back any description\n\n";
+        }else if(($response = $request->send()) && ((isset($response->status) && !$response->status) || (!isset($response->status) && !isset($response->id)))){
+            self::printMessage(array('status'=>false,'type'=>'remote','message'=>(isset($response->description)? "Server Error: ".$response->description :
+            "Server Error: Some kind of error happens, but server does not send back any description")));
             exit(1);
         }else if(!$response){
-            print "Error: Connection server error\n\n";
+            self::printMessage(array('status'=>false,'type'=>'remote','message'=>"Error: Connection server error"));
             exit(1);
-        }else if($response && isset($response['status']) && $response['status'])
-            print "OK: SBC was register on server\n\n";            
+        }else if($response && isset($response->id))
+            self::printMessage(array('status'=>true,'id'=>$response->id,'message'=>"OK: SBC was register on server"));
     }
 }
 
 if(php_sapi_name()=='cli')
-    ServerRequest::main();
+    ServerRequest::main($argv);
 
 ?>
