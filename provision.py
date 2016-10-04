@@ -209,6 +209,10 @@ IP_FIELDS_MAP = {
     'slaac':  ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'proto']),
 }
 
+API_KEY_NAME = 'default'
+
+SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
+
 ####
 
 try:
@@ -218,7 +222,7 @@ try:
     config = Config.load(ifaces)
 
     print("Connecting to REST API...")
-    api = safe.api('localhost', port=81)
+    api = safe.api('localhost', port=81, specfile=SAFE_JSON if os.path.exists(SAFE_JSON) else None)
 
     print('Loading settings from REST interface...')
 
@@ -303,7 +307,7 @@ try:
                 print('VLAN interface {0} already present ({1}), skipping creation..'.format(ip_object.interface, name))
                 del network_iface_map[name]
             except ObjectNotFound as e:
-                object_name = '{}_{}'.format(ip_object.interface, random_bytes())
+                object_name = 'vlan_{}_{}'.format(ip_object.interface, random_bytes())
                 api.network.interface.create(object_name, dict(ifname=ifname, id=ifnumber))
 
         object_name = '{}_{}'.format(ip_object.interface, random_bytes())
@@ -390,7 +394,7 @@ try:
 
         except ObjectNotFound as e:
             if network_route_map.get(route_object.name):
-                print('+ Removing conflicting route with name ({0}) on interface {1}, skipping creation..'.format(\
+                print('+ Removing conflicting route with name ({0}) on interface {1}..'.format(\
                     route_object.name, route_object.interface))
                 api.network.route[route_object.name].delete()
                 del network_route_map[route_object.name]
@@ -412,7 +416,15 @@ try:
 
     api.network.apply()
 
+    if API_KEY_NAME not in api.rest.apikey.keys():
+        print('Setting up REST API "{}" key...'.format(API_KEY_NAME))
+        api.rest.apikey.create(API_KEY_NAME, {'description': 'Provisioning API key'})
+
+    with open('api.key', 'w') as fdes:
+        fdes.write(api.rest.apikey[API_KEY_NAME]['key'])
+
     print('Done!')
+
 
 except Exception as e:
     print('ERROR: {}'.format(e).replace('\n', ' - '), file=sys.stderr)
