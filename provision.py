@@ -38,7 +38,12 @@ def random_bytes():
 
 def retrieve_map(o, msg):
     print(msg)
-    return { name: o[name].retrieve() for name in o.keys() }
+    result = dict()
+    for name in o.keys():
+        data = o[name].retrieve()
+        logger.debug('({}) => {!s}'.format(name, data))
+        result[name] = data
+    return result
 
 def asdict_filter(o, names):
     return asdict(o, filter=lambda a,_: a.name in names)
@@ -89,12 +94,16 @@ class ConfigIP(object):
 
             if self.proto.startswith('static'):
                 self.address, self.prefix = tuple(data['address'].split('/', 1))
+                self.hostname = None
             else:
+                self.address, self.prefix = None, None
                 self.hostname = data['hostname']
 
             if self.proto.startswith('dhcp'):
                 self.peerdns    = data['use_auto_dns']
                 self.persistent = data['persistant_dhcp']
+            else:
+                self.peerdns, self.persistent = None, None
 
         except KeyError as e:
             raise Failure('option "{}" missing on section "{}"'.format(e, ifname))
@@ -195,7 +204,7 @@ class Config(object):
 ####
 
 IP_FIELDS_MAP = {
-    'static': ('with address {address}/{prefix}', ['interface', 'address', 'prefix'], ['address', 'prefix', 'interface', 'proto']),
+    'static': ('with address {address}/{prefix}', ['interface', 'address', 'proto'], ['address', 'prefix', 'interface', 'proto']),
     'dhcp':   ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'peerdns', 'persistent', 'proto']),
     'slaac':  ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'proto']),
 }
@@ -312,8 +321,21 @@ try:
             name, _ = next(search_object(network_ip_vlans_map,
                 lambda x: compare_keys(x, asdict(ip_object), check_fields),
                 lambda: "not found"))
+
+            validate_fields = ['prefix', 'hostname']
+            validate_changed = False
+
+            for field in validate_fields:
+                value = getattr(ip_object, field, None)
+                if value is not None and value != network_ip_vlans_map[name][field]:
+                    print('+ Setting "{{0}}={{1}}" for IP {0} (on {{interface}})...'.format(debug_info).format(field, value, **asdict(ip_object)))
+                    api.network.ip[name][field] = value
+                    validate_changed = True
+
+            if not validate_changed:
+                print('+ Interface {{interface}} already has a {{proto}} IP {0}, skipping creation..'.format(debug_info).format(**asdict(ip_object)))
+
             del network_ip_map[name]
-            print('+ Interface {{interface}} already has a {{proto}} IP {0}, skipping creation..'.format(debug_info).format(**asdict(ip_object)))
 
         except ObjectNotFound as e:
             postdata = asdict_filter(ip_object, store_fields)
@@ -343,16 +365,36 @@ try:
     def compare_routes_vlan(route_obj):
         def compare_obj_inner(obj):
             obj = dict(obj, interface=network_vlans_map.get(obj['interface'], obj['interface']))
-            return compare_keys(obj, asdict(route_object), ['address', 'prefix', 'gateway', 'interface'])
+            return compare_keys(obj, asdict(route_object), ['address', 'prefix', 'interface'])
 
         return compare_obj_inner
 
     for route_object in config.routes:
         try:
             name, _ = next(search_object(network_route_map, compare_routes_vlan(route_object), lambda: "not found"))
-            print('+ Route already present ({0}) on interface {1}, skipping creation..'.format(name, route_object.interface))
+
+            validate_fields = ['gateway']
+            validate_changed = False
+
+            for field in validate_fields:
+                value = getattr(route_object, field, None)
+                if value is not None and value != network_route_map[name][field]:
+                    print('+ Setting "{0}={1}" for route {2} (on {3})...'.format(field, value, name, route_object.interface))
+                    api.network.route[name][field] = value
+                    validate_changed = True
+
+            if not validate_changed:
+                print('+ Route already present ({0}) on interface {1}, skipping creation..'.format(name, route_object.interface))
+
             del network_route_map[name]
+
         except ObjectNotFound as e:
+            if network_route_map.get(route_object.name):
+                print('+ Removing conflicting route with name ({0}) on interface {1}, skipping creation..'.format(\
+                    route_object.name, route_object.interface))
+                api.network.route[route_object.name].delete()
+                del network_route_map[route_object.name]
+
             api.network.route.create(route_object.name, asdict(route_object, filter=(lambda a,_: a.name != 'name')))
 
     print('Removing previous routes..')
