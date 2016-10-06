@@ -1,5 +1,11 @@
 # static[46], dhcp[46], slaac6
 
+[ems]
+server = '10.10.11.3'
+ip = '10.10.10.2'
+macid = 'macid-goes-here'
+current = 'emskey'
+
 [["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
 type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
 address="10.10.10.2/24"             # IP address and network prefix.

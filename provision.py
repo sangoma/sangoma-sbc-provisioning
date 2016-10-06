@@ -4,14 +4,19 @@ from __future__ import print_function
 
 from contextlib import contextmanager
 
-from attr import attrs, attrib, Factory, asdict
+from attr import attrs, attrib, Factory, asdict, fields
+
+import os
+import sys
+import select
+import logging
+import subprocess
+import json
+
+from argparse import ArgumentParser
 
 import safe
 import toml
-import sys
-import os
-
-import logging
 
 logging.basicConfig(
     format='%(asctime)-15s [%(levelname)-8s] %(message)s',
@@ -39,6 +44,10 @@ def random_bytes():
 
 ########
 
+def message(*args):
+    for arg in args:
+        print(' '*11, arg)
+
 class ProgressStatus(BaseException):
     def __init__(self, status, *args):
         self.status = status
@@ -61,35 +70,41 @@ class ProgressControl(object):
     def skip(self, *msgs):
         raise ProgressStatus('SKIPPED', *(self.msgs + list(msgs)))
 
+    def fail(self, *msgs):
+        raise ProgressStatus('FAILURE', *(self.msgs + list(msgs)))
+
     def done(self, *msgs):
         raise ProgressStatus('SUCCESS', *(self.msgs + list(msgs)))
 
-def message(*args):
-    for arg in args:
-        print(' '*11, arg)
+    def flush(self):
+        message(*self.msgs)
 
 @contextmanager
 def progress(*args, **kwargs):
     fd = kwargs.get('file', sys.stdout)
+    control = None
 
     try:
         print('(   ...   )', *args, end='', **kwargs)
         logger.info(*args)
 
         fd.flush()
-        yield ProgressControl(**kwargs)
+        control = ProgressControl(**kwargs)
+        yield control
 
     except ProgressStatus as e:
         print('\r( {} )'.format(e.status))
         if len(e.args) != 0:
-            logger.info('procedure succeeded ({!s})'.format(e.args))
+            logger.info('procedure/{} ({!s})'.format(e.status, e.args))
             message(*e.args)
             print()
+        control.flush()
         raise StopIteration()
 
     except:
-        logger.warning('procedure failed ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
+        logger.warning('procedure/exception ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
         print('\r( FAILURE )')
+        control.flush()
         raise
 
     print('\r( SUCCESS )')
@@ -218,20 +233,43 @@ class ConfigNetwork(object):
         except KeyError as e:
             raise Failure('option "{}" missing on section "global"'.format(e))
 
+
+@attrs(init=False)
+class ConfigEMS(object):
+    server = attrib(None)
+    ip = attrib(None)
+    name = attrib(None)
+    current = attrib(None)
+    macid = attrib(None)
+
+    def __init__(self, data):
+        try:
+            self.server = data['server']
+            self.ip = data['ip']
+            self.name = data['name']
+            self.current = data['current']
+            self.macid = data['macid']
+
+        except KeyError as e:
+            raise Failure('option "{}" missing on section "ems"'.format(e))
+
+
 @attrs(init=False)
 class Config(object):
+    ems = attrib(None)
     general = attrib(None)
     ips = attrib(Factory(list))
     routes = attrib(Factory(list))
 
     def __init__(self, data, ifaces):
+        self.ems = ConfigEMS(data['ems'])
         self.general = ConfigNetwork(data['global'])
         logger.debug('General network configuration: {!s}'.format(self.general))
 
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
-            if cfgname == 'global':
+            if cfgname in [ 'global', 'ems' ]:
                 continue
             if isinstance(cfgdata, list):
                 physname = cfgname if cfgname.find('.') == -1 else cfgname[:cfgname.find('.')]
@@ -262,6 +300,36 @@ class Config(object):
         except toml.TomlDecodeError as e:
             raise e
 
+def dump_config(configobj):
+    def dump_keys(level, name, obj):
+        print ('\n', '  '*level, 'Object "{}"'.format(name))
+        level = level+1
+
+        mlen = reduce(max, [ len(e.name) for e in fields(obj.__class__) ])
+        objects = []
+
+        for key, val in [ (e.name, getattr(obj, e.name, '')) for e in fields(obj.__class__) ]:
+            if isinstance(val, basestring) or val is None:
+                print('  '*level, '{{:{0}s}}: {{!s}}'.format(mlen).format(key, val if val is not None else '<none>'))
+            else:
+                objects.append((key, val))
+
+        for key, val in objects:
+            if isinstance(val, list):
+                print('\n', ' '*level, 'List "{}"'.format(key))
+                level += 1
+                for num, elm in zip(xrange(len(val)), val):
+                    dump_keys(level, '{}[{}]'.format(key, num), elm)
+
+            elif isinstance(val, dict):
+                for elmkey, elmval in val.items():
+                    dump_keys(level, '{}[{}]'.format(key, elmkey), val)
+
+            else:
+                dump_keys(level, key, val)
+
+    dump_keys(0, "config", configobj)
+
 ####
 
 IP_FIELDS_MAP = {
@@ -278,12 +346,31 @@ VERSION_FMT = '{major_version}.{minor_version}.{patch_version}'
 
 ####
 
+parser = ArgumentParser(usage='%(prog)s [options] -- [server-request options]')
+
+parser.add_argument('--dump', action='store_true', help='dump the configuration data (do not run the configuration step).')
+
+parser.add_argument('--force-apply', action='store_true', help='apply and restart network even if no changes have been made')
+parser.add_argument('--no-restart', action='store_true', help='do not restart the network after configuration.')
+
+parser.add_argument('--no-request', action='store_true', help='do not run the provisioning procedure (server-request script).')
+parser.add_argument('args', nargs='*', help='arguments passed directly to the "server-request" script.')
+
+opts = parser.parse_args()
+
+####
 
 try:
-    ifaces, config, api = set(), None, None
+    ifaces, changed = set(), False
+    config, api = None, None
 
     with progress('Loading configuration file...') as p:
         config = Config.load(ifaces)
+
+    if opts.dump:
+        dump_config(config)
+        print()
+        sys.exit(0)
 
     with progress("Connecting to REST API...") as p:
         api = safe.api('localhost', port=81, specfile=SAFE_JSON if os.path.exists(SAFE_JSON) else None)
@@ -368,6 +455,7 @@ try:
                     for port_num in range(5060, 5100):
                         if sip_ip_port_profiles.get(loopback_ip, dict()).get(port_num, 0) == 0:
                             api.sip.profile[factory_sip_p].update({'sip-port': port_num, 'sip-ip': loopback_ip })
+                            changed = True
                             p.message('+ Remapped IP for factory profile "{}"'.format(factory_sip_p))
                             break
                         else:
@@ -377,6 +465,7 @@ try:
                 p.message('+ Skipping SIP profiles changes - {}'.format(e))
 
             api.network.ip.delete(factory_net_ip)
+            changed = True
             del network_ip_map[factory_net_ip]
             p.done('+ Removed factory IP address')
 
@@ -398,6 +487,7 @@ try:
                 except ObjectNotFound as e:
                     object_name = 'vlan_{}_{}'.format(ip_object.interface, random_bytes())
                     api.network.interface.create(object_name, dict(ifname=ifname, id=ifnumber))
+                    changed = True
 
         object_name = '{}_{}'.format(ip_object.interface, random_bytes())
         debug_info, check_fields, store_fields = None, None, None
@@ -436,6 +526,7 @@ try:
                 postdata = asdict_filter(ip_object, store_fields)
                 # DEBUG print("Creating IP {0} with data: {1}".format(object_name, str(postdata)))
                 api.network.ip.create(object_name, postdata)
+                changed = True
 
     with progress('Removing previous IP addresses...') as p:
         for ipname, ipdata in network_ip_map.items():
@@ -447,12 +538,14 @@ try:
                 continue
 
             api.network.ip.delete(ipname)
+            changed = True
             p.tick()
 
     with progress('Removing previous VLAN interfaces...') as p:
         for ifname, ifdata in network_iface_map.items():
             if ifdata.get('id') not in [ None, '' ]:
                 api.network.interface.delete(ifname)
+                changed = True
                 p.tick()
 
     with progress('Adding routes from configuration...') as p:
@@ -487,38 +580,142 @@ try:
                     p.message('+ Removed conflicting route with name ({0}) on interface {1}..'.format(\
                         route_object.name, route_object.interface))
                     api.network.route[route_object.name].delete()
+                    changed = True
                     del network_route_map[route_object.name]
 
                 api.network.route.create(route_object.name, asdict(route_object, filter=(lambda a,_: a.name != 'name')))
+                changed = True
 
     with progress('Removing previous routes..') as p:
         for routename in network_route_map.keys():
             api.network.route.delete(routename)
+            changed = True
             p.tick()
 
-    global_options = normalize_dict(asdict(config.general))
-
     with progress('Configuring new global network settings...') as p:
-        api.network.configuration.update(global_options)
+        global_request = normalize_dict(asdict(config.general))
+        global_current = api.network.configuration.retrieve()
+
+        for key in (set(global_request.keys()) | set(global_current.keys())):
+            if key not in global_request or key not in global_current:
+                break
+            if global_request[key] != global_current[key]:
+                break
+        else:
+            p.skip('+ Global options not changed from current options.')
+
+        api.network.configuration.update(global_request)
+        changed = True
 
     with progress('Applying network changes (may take a while)..') as p:
-        api.network.apply()
+        if changed or opts.force_apply:
+            api.network.apply()
+        else:
+            p.skip('+ No changes to apply.')
 
     if API_KEY_NAME not in api.rest.apikey.keys():
-
         with progress('Setting up REST API "{}" key...'.format(API_KEY_NAME)) as p:
             api.rest.apikey.create(API_KEY_NAME, {'description': 'Provisioning API key'})
+            changed = True
+
+    with progress('Configuration process finished - restarting network..'):
+        if (changed or opts.force_apply) and not opts.no_restart:
+            api.network.restart()
+        else:
+            if opts.no_restart:
+                p.skip('+ Restart disabled via command line.')
+            else:
+                p.skip('+ No changes to apply, not restarting.')
+
+    api_key = api.rest.apikey[API_KEY_NAME]['key']
 
     with open('api.key', 'w') as fdes:
-        fdes.write(api.rest.apikey[API_KEY_NAME]['key'])
+        print(api_key, file=fdes)
 
-    print('Configuration procedure finished successfully - network restart is REQUIRED for fully applying the new settings.')
+    ems_data, ems_lines = '', []
+
+    try:
+        with progress('Running EMS provisioning script...') as p:
+            # check each argument from config, if present on opts.args, if not add it
+            cmdargs = ['./server-request' ] + opts.args
+
+            def check_append(param, value, msg):
+                arg, argeq = '--{}'.format(param), '--{}='.format(param)
+                if arg not in opts.args and next((False for e in opts.args if e.startswith(argeq)), True):
+                    cmdargs.extend([arg, value])
+                else:
+                    p.message('{} (using command line)'.format(msg))
+
+            for param in [ e.name for e in fields(config.ems.__class__) ]:
+                check_append(param, getattr(config.ems, param),
+                    '+ Overriding option "{}"'.format(param))
+
+            check_append('key', api_key, '+ Overriding SBC REST API key')
+
+            proc = None
+            with open('/dev/null') as fdnil:
+                proc = subprocess.Popen(cmdargs, stdin=fdnil, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+            fdmap = { proc.stdout.fileno(): proc.stdout,
+                      proc.stderr.fileno(): proc.stderr }
+
+            with open('requests.log', 'a') as fdes:
+                print('----------', file=fdes)
+
+                while len(fdmap) != 0:
+                    rfds = select.select(fdmap.keys(), [], [])[0]
+                    for rfd in rfds:
+                        fileptr = fdmap[rfd]
+                        line = fileptr.readline()
+
+                        if line == '':
+                            del fdmap[rfd]
+                            continue
+
+                        if fileptr == proc.stderr:
+                            ems_lines.append(line)
+                            print(line, end='', file=fdes)
+
+                        elif fileptr == proc.stdout:
+                            ems_data += line
+
+                        p.tick()
+
+                print('(stdout) ', ems_data, file=fdes)
+
+            status = proc.wait()
+            errmsg = 'check logs for more information'
+
+            try:
+                resp = json.loads(ems_data)
+
+                if resp['status']:
+                    p.done('+ {message} (ID = {id})'.format(**resp))
+
+                errmsg = '{message} ({type} error)'.format(**resp)
+                p.message('+ {}'.format(errmsg))
+
+            except ValueError as e:
+                logger.warning('no json decoded: {!s}'.format(e))
+
+            raise Failure('server-request failed ({1}) - {0}'.format(errmsg,
+                'rc={!s}'.format(status) if status > 0 else 'sig={!s}'.format(0-status)))
+
+    except Failure as e:
+        if len(ems_lines) != 0:
+            print('\nOutput from \"server-request\" procedure:')
+            for line in ems_lines:
+                print(' '*4, line)
+            print()
+        raise
 
 except Exception as e:
     print()
     print('ERROR: {}'.format(e).replace('\n', ' - '), file=sys.stderr)
     logger.critical('configuration failed ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
 
-    import traceback
-    traceback.print_tb(sys.exc_info()[2], file=open('failure.log', 'a'))
+    with open('failure.log', 'a') as fdes:
+        import traceback
+        traceback.print_tb(sys.exc_info()[2], file=fdes)
+        print('----------', file=fdes)
     sys.exit(1)
