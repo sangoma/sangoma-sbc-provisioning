@@ -485,6 +485,7 @@ try:
 
     if update_do:
         def execute(args, errmsg, p):
+            logger.debug('executing {!s}'.format(args))
             proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for line in proc.stdout:
                 p.message(line)
@@ -792,6 +793,7 @@ try:
 
             proc = None
             with open('/dev/null') as fdnil:
+                logger.debug('executing {!s}'.format(cmdargs))
                 proc = subprocess.Popen(cmdargs, stdin=fdnil, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
             fdmap = { proc.stdout.fileno(): proc.stdout,
