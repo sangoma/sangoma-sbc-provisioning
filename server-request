@@ -66,20 +66,21 @@ class ServerRequest{
     public function help(){
         $out = "server-request --ip ipaddress --server <ip:port> --key api-key --current validation-string --macid mac-address [--name] [--description] [--venue] [--altmacid] [--mediamacid] [--hdserial] [--ca] [--help]\n";
         $out.= "server-request --config file.ini\n";
-        $out.= "\n\t--help\t\t\tPrint this help\n";
-        $out.= "\t--ip\t\t\tIP address of the SBC (IP address of the SBC, Same IP as the one which is used for connecting to EMS)\n";
-        $out.= "\t--server\t\tServer socket where request should be sent\n";
-        $out.= "\t--key\t\t\tREST API Key\n";
-        $out.= "\t--current\t\tA string which will be provided by us as an identifier to validate the API call\n";
-        $out.= "\t--macid\t\t\tMAC Address of the primary ethernet port\n";
-        $out.= "\t--name\t\t\tAn unique name for the SBC\n";
-        $out.= "\t--description\t\tDescription for the particular SBC\n";
-        $out.= "\t--venue\t\t\tinformation on the location of the SBC\n";
-        $out.= "\t--altmacid\t\tMAC address of secondary ethernet port, if any\n";
-        $out.= "\t--mediamacid\t\tMAC Address of media interface\n";
-        $out.= "\t--hdserial\t\tSerial Number of Harddisk\n";      
-        $out.= "\t--ca\t\t\tPem file for secure connection. If not pressent uses http request instead of https\n";
-        $out.= "\t--config\t\tConfig file .ini with all needed parameters. Command line parameter overrides same parameter on config file\n";
+        $out.= "\n  --help        Print this help\n";
+        $out.= "  --ip          IP address of the SBC (same IP used for connecting to EMS)\n";
+        $out.= "  --server      Server socket where request should be sent\n";
+        $out.= "  --key         REST API key\n";
+        $out.= "  --current     A string which will be provided by us as an identifier to validate the API call\n";
+        $out.= "  --macid       MAC address of the primary ethernet port\n";
+        $out.= "  --name        An unique name for the SBC\n";
+        $out.= "  --description Description for the particular SBC\n";
+        $out.= "  --venue       Information on the location of the SBC\n";
+        $out.= "  --altmacid    MAC address of secondary ethernet port, if any\n";
+        $out.= "  --mediamacid  MAC Address of media interface\n";
+        $out.= "  --hdserial    Serial number of the hard disk\n";
+        $out.= "  --ca          PEM file for secure connection. If not present, uses HTTP request instead of HTTPS\n";
+        $out.= "  --config      Alternativelly, a config file (.ini) with command line parameters.\n";
+        $out.= "                Command line parameters override parameters on config file\n";
         return $out;
     }
 

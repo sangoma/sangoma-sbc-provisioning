@@ -414,14 +414,14 @@ SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
 
 parser = ArgumentParser(usage='%(prog)s [options] -- [server-request options]')
 
-parser.add_argument('--dump', action='store_true', default=False, help='dump the configuration data (do not run the configuration step).')
+parser.add_argument('--dump', action='store_true', default=False, help='dump the configuration data and exit')
 
 parser.add_argument('--no-update', action='store_true', default=False, help='do not attempt update if an update package is present')
 
 parser.add_argument('--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
-parser.add_argument('--no-restart', action='store_true', default=False, help='do not restart the network after configuration.')
+parser.add_argument('--no-restart', action='store_true', default=False, help='do not restart the network after configuration')
 
-parser.add_argument('--no-request', action='store_true', default=False, help='do not run the provisioning procedure (server-request script).')
+parser.add_argument('--no-request', action='store_true', default=False, help='do not contact the server (via server-request script)')
 parser.add_argument('args', nargs='*', help='arguments passed directly to the "server-request" script.')
 
 opts = parser.parse_args()
