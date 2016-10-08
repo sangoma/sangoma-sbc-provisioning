@@ -29,6 +29,9 @@ logger = logging.getLogger()
 class Failure(Exception):
     pass
 
+class Exit(Exception):
+    pass
+
 class ObjectNotFound(Exception):
     pass
 
@@ -41,6 +44,46 @@ def random_bytes():
             return data.encode('hex')
         except:
             return data.hex()
+
+#######
+
+@attrs
+class Version(object):
+    major = attrib(None)
+    minor = attrib(None)
+    patch = attrib(None)
+
+    def __cmp__(self, other):
+        res = cmp(self.major, other.major)
+        if res == 0:
+            res = cmp(self.minor, other.minor)
+            if res == 0:
+                return cmp(self.patch, other.patch)
+            else:
+                return res
+        else:
+            return res
+
+    def __str__(self):
+        return '{}.{}.{}'.format(self.major, self.minor, self.patch)
+
+    @classmethod
+    def from_update_package(cls, pkg):
+        fields = pkg.split('-')
+        if len(fields) < 2:
+            raise Failure('invalid package name: {}'.format(pkg))
+
+        lst = [ int(e) for e in fields[1].split('.') ]
+        if len(lst) != 3:
+            raise Failure('invalid version for package "{}": {}'.format(pkg, fields[1]))
+
+        return Version(*lst)
+
+    @classmethod
+    def from_api_version(cls, data):
+        lst = map(int, [data['major_version'], data['minor_version'], data['patch_version']])
+        return Version(*lst)
+
 
 ########
 
@@ -68,13 +111,13 @@ class ProgressControl(object):
         self.tick()
 
     def skip(self, *msgs):
-        raise ProgressStatus('SKIPPED', *(self.msgs + list(msgs)))
+        raise ProgressStatus('SKIPPED', *msgs)
 
     def fail(self, *msgs):
-        raise ProgressStatus('FAILURE', *(self.msgs + list(msgs)))
+        raise ProgressStatus('FAILURE', *msgs)
 
     def done(self, *msgs):
-        raise ProgressStatus('SUCCESS', *(self.msgs + list(msgs)))
+        raise ProgressStatus('SUCCESS', *msgs)
 
     def flush(self):
         message(*self.msgs)
@@ -94,11 +137,11 @@ def progress(*args, **kwargs):
 
     except ProgressStatus as e:
         print('\r( {} )'.format(e.status))
+        control.flush()
         if len(e.args) != 0:
             logger.info('procedure/{} ({!s})'.format(e.status, e.args))
             message(*e.args)
             print()
-        control.flush()
         raise StopIteration()
 
     except:
@@ -242,13 +285,35 @@ class ConfigEMS(object):
     current = attrib(None)
     macid = attrib(None)
 
-    def __init__(self, data):
+    def __init__(self, data, ips):
         try:
             self.server = data['server']
-            self.ip = data['ip']
-            self.name = data['name']
             self.current = data['current']
+            self.ip = data['ip']
             self.macid = data['macid']
+
+            if self.ip.startswith('(') and self.ip.endswith(')'):
+                ifname = self.macid.strip('()')
+                logger.debug('using interface {} for source IP'.format(ifname))
+                for ip in ips:
+                    if ip.interface == ifname and ip.proto.startswith('static'):
+                        self.ip = ip.address
+                        logger.debug('source IP address is now {}'.format(self.ip))
+                        break
+                else:
+                    raise Failure('unable to find a static IP address on interface {} to use as the source IP'.format(ifname))
+
+            if self.macid.startswith('(') and self.macid.endswith(')'):
+                ifname = self.macid.strip('()')
+                logger.debug('using interface {} for MAC address'.format(ifname))
+                try:
+                    with open('/sys/class/net/{}/address'.format(ifname)) as fdes:
+                        self.macid = fdes.read().strip()
+                    logger.debug('MAC address is now {}'.format(self.macid))
+                except:
+                    raise Failure('unable to read MAC address for interface {} ({!s})'.format(ifname, e))
+
+            self.name = data.get('name')
 
         except KeyError as e:
             raise Failure('option "{}" missing on section "ems"'.format(e))
@@ -262,10 +327,6 @@ class Config(object):
     routes = attrib(Factory(list))
 
     def __init__(self, data, ifaces):
-        self.ems = ConfigEMS(data['ems'])
-        self.general = ConfigNetwork(data['global'])
-        logger.debug('General network configuration: {!s}'.format(self.general))
-
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
@@ -284,6 +345,11 @@ class Config(object):
                         routes.append(ConfigRoute(cfgname, routename[6:], routedata))
             else:
                 raise Failure('configuration error: did you forget the double square brackets on "{}"?'.format(cfgdata))
+
+        self.ems = ConfigEMS(data['ems'], ips)
+        logger.debug('EMS network configuration: {!s}'.format(self.general))
+        self.general = ConfigNetwork(data['global'])
+        logger.debug('General network configuration: {!s}'.format(self.general))
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
@@ -332,6 +398,8 @@ def dump_config(configobj):
 
 ####
 
+UPDATES_PATH = 'updates'
+
 IP_FIELDS_MAP = {
     'static': ('with address {address}/{prefix}', ['interface', 'address', 'proto'], ['address', 'prefix', 'interface', 'proto']),
     'dhcp':   ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'peerdns', 'persistent', 'proto']),
@@ -342,18 +410,18 @@ API_KEY_NAME = 'default'
 
 SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
 
-VERSION_FMT = '{major_version}.{minor_version}.{patch_version}'
-
 ####
 
 parser = ArgumentParser(usage='%(prog)s [options] -- [server-request options]')
 
-parser.add_argument('--dump', action='store_true', help='dump the configuration data (do not run the configuration step).')
+parser.add_argument('--dump', action='store_true', default=False, help='dump the configuration data (do not run the configuration step).')
 
-parser.add_argument('--force-apply', action='store_true', help='apply and restart network even if no changes have been made')
-parser.add_argument('--no-restart', action='store_true', help='do not restart the network after configuration.')
+parser.add_argument('--no-update', action='store_true', default=False, help='do not attempt update if an update package is present')
 
-parser.add_argument('--no-request', action='store_true', help='do not run the provisioning procedure (server-request script).')
+parser.add_argument('--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
+parser.add_argument('--no-restart', action='store_true', default=False, help='do not restart the network after configuration.')
+
+parser.add_argument('--no-request', action='store_true', default=False, help='do not run the provisioning procedure (server-request script).')
 parser.add_argument('args', nargs='*', help='arguments passed directly to the "server-request" script.')
 
 opts = parser.parse_args()
@@ -372,29 +440,98 @@ try:
         print()
         sys.exit(0)
 
+    update_pkg = None
+    update_do = False
+
+    with progress('Checking for update packages..') as p:
+        if not os.path.exists(UPDATES_PATH):
+            p.skip('No "updates" folder, skipping.')
+
+        pkgs = [ e for e in os.listdir(UPDATES_PATH) if e.startswith('nsc') and e.endswith('.tgz') ]
+        pkgs = sorted(pkgs, key=lambda s: map(lambda e: int(e) if e.isdigit() else e, s.split('.')), reverse=True)
+
+        if len(pkgs) == 0:
+            p.skip('No valid packages on "updates" folder, skipping.')
+
+        update_pkg = pkgs[0]
+        p.done('+ Found "{}"!'.format(update_pkg))
+
     with progress("Connecting to REST API...") as p:
         api = safe.api('localhost', port=81, specfile=SAFE_JSON if os.path.exists(SAFE_JSON) else None)
 
     current_version = None
-    minimum_version = { 'major_version': 2, 'minor_version': 3, 'patch_version': 0 } # 2 }
+    minimum_version = Version(2,3,1)
 
     with progress('Checking minimum required NSC version') as p:
-        current_version = api.nsc.version.retrieve()
+        current_version = Version.from_api_version(api.nsc.version.retrieve())
 
-        succeeded = \
-           (int(current_version['major_version']) >  int(minimum_version['major_version'])) or \
-           (int(current_version['major_version']) == int(minimum_version['major_version']) and \
-            int(current_version['minor_version']) >  int(minimum_version['minor_version'])) or \
-           (int(current_version['major_version']) == int(minimum_version['major_version']) and \
-            int(current_version['minor_version']) == int(minimum_version['minor_version']) and \
-            int(current_version['patch_version']) >= int(minimum_version['patch_version']))
+        if update_pkg is not None and not opts.no_update:
+            update_version = Version.from_update_package(update_pkg)
+            if update_version > current_version:
+                if update_version > minimum_version:
+                    update_do = True
+                    p.done('+ Update version = {0}, minimum version = {1}'
+                           .format(update_version, minimum_version))
+                else:
+                    raise Failure('update version is {0}, minimum required is {1} - cannot proceed'\
+                                  .format(update_version, minimum_version))
 
-        if succeeded:
+        if current_version >= minimum_version:
             p.done('+ Current version = {0}, minimum version = {1}'\
-                .format(VERSION_FMT.format(**current_version), VERSION_FMT.format(**minimum_version)))
+                   .format(current_version, minimum_version))
         else:
-            raise Failure('current version is {0}, minimum required is {1} - please run the UPDATE step before proceeding'\
-                .format(VERSION_FMT.format(**current_version), VERSION_FMT.format(**minimum_version)))
+            raise Failure('current version is {0}, minimum required is {1} - cannot proceed'\
+                          .format(current_version, minimum_version))
+
+    if update_do:
+        def execute(args, errmsg, p):
+            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+            for line in proc.stdout:
+                p.message(line)
+
+            status = proc.wait()
+            p.tick()
+
+            if status != 0:
+                raise Failure('{} ({})'.format(errmsg,
+                    'rc={!s}'.format(status) if status > 0 else 'sig={!s}'.format(0-status)))
+
+        with progress('Checking swap space (preparing for update)') as p:
+            SWAP_FILE = '/.swap00'
+
+            if not os.path.exists(SWAP_FILE):
+
+                execute(['dd', 'if=/dev/zero', 'of={}'.format(SWAP_FILE), 'bs=4M', 'count=192'],
+                        'swap creation failed', p)
+
+                execute(['mkswap', '-v1', SWAP_FILE],
+                        'swap format failed', p)
+
+            if os.system('grep -q "^{}" /proc/swaps 2>/dev/null'.format(SWAP_FILE)) != 0:
+
+                execute(['swapon', SWAP_FILE],
+                        'swap activation failed', p)
+
+                p.done('+ Swap space activated successfully')
+
+            else:
+                p.skip('+ Swap space already activated')
+
+        with progress('Uploading update package (this may take a few minutes)..'):
+            filepath = os.path.abspath(os.path.join('.', UPDATES_PATH, update_pkg))
+            api.update.package.upload(filepath)
+
+        with progress('Running update procedure (this may take several minutes)..'):
+            api.update.package.install()
+
+        with progress('Running post-update procedures...') as p:
+            execute(['swapoff', SWAP_FILE],
+                    'swap de-activation failed', p)
+
+            execute(['rm', '-f', SWAP_FILE],
+                    'swap deletion failed', p)
+
+        raise Exit('Update successful! The system now requires a reboot before proceeding - please restart your system and re-run the provisioning script.')
 
     network_ip_map    = retrieve_map(api.network.ip,        'Retrieving IP configuration...')
     network_iface_map = retrieve_map(api.network.interface, 'Retrieving interfaces configuration...')
@@ -641,7 +778,8 @@ try:
 
             def check_append(param, value, msg):
                 arg, argeq = '--{}'.format(param), '--{}='.format(param)
-                if arg not in opts.args and next((False for e in opts.args if e.startswith(argeq)), True):
+                if value is not None and arg not in opts.args and \
+                   next((False for e in opts.args if e.startswith(argeq)), True):
                     cmdargs.extend([arg, value])
                 else:
                     p.message('{} (using command line)'.format(msg))
@@ -709,10 +847,18 @@ try:
             print()
         raise
 
+except Exit as e:
+    print('\n{!s}'.format(e))
+    logger.info('exit requested ({!s})'.format(e).replace('\n', ' - '))
+
 except Exception as e:
-    print()
-    print('ERROR: {}'.format(e).replace('\n', ' - '), file=sys.stderr)
-    logger.critical('configuration failed ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
+    excstring = str(e)
+    if len(excstring) == 0:
+        excstring = 'system/internal error'
+    excmsg = '{} ({})'.format(excstring, e.__class__.__name__).replace('\n', ' - ')
+
+    print('\nERROR: {}'.format(excmsg), file=sys.stderr)
+    logger.critical('configuration failed: {}'.format(excmsg))
 
     with open('failure.log', 'a') as fdes:
         import traceback
