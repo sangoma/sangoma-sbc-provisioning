@@ -281,39 +281,61 @@ class ConfigNetwork(object):
 class ConfigEMS(object):
     server = attrib(None)
     ip = attrib(None)
-    name = attrib(None)
     current = attrib(None)
+
     macid = attrib(None)
+    altmacid = attrib(None)
+    mediamacid = attrib(None)
+
+    name = attrib(None)
+    description = attrib(None)
+    venue = attrib(None)
+    hdserial = attrib(None)
+    ca = attrib(None)
+
+    def deref_ip_address(self, value, ips, name):
+        if value is None or not value.startswith('(') or not value.endswith(')'):
+            return value
+        ifname = value.strip('()')
+        logger.debug('using interface {} for {}'.format(ifname, name))
+        for ip in ips:
+            if ip.interface == ifname and ip.proto.startswith('static'):
+                value = ip.address
+                logger.debug('{} is now {}'.format(name, value))
+                return value
+        else:
+            raise Failure('unable to find a static IP address on interface {} to use as {}'.format(ifname, name))
+
+    def deref_mac_address(self, value, name):
+        if value is None or not value.startswith('(') or not value.endswith(')'):
+            logger.debug('using {} as {}'.format(value, name))
+            return value
+
+        ifname = value.strip('()')
+        logger.debug('using interface {} for {}'.format(ifname, name))
+        try:
+            with open('/sys/class/net/{}/address'.format(ifname)) as fdes:
+                value = fdes.read().strip()
+            logger.debug('{} is now {}'.format(name, value))
+            return value
+        except:
+            raise Failure('unable to read MAC address for interface {} ({!s})'.format(ifname, e))
 
     def __init__(self, data, ips):
         try:
             self.server = data['server']
+            self.ip = self.deref_ip_address(data['ip'], ips, "source IP")
             self.current = data['current']
-            self.ip = data['ip']
-            self.macid = data['macid']
 
-            if self.ip.startswith('(') and self.ip.endswith(')'):
-                ifname = self.macid.strip('()')
-                logger.debug('using interface {} for source IP'.format(ifname))
-                for ip in ips:
-                    if ip.interface == ifname and ip.proto.startswith('static'):
-                        self.ip = ip.address
-                        logger.debug('source IP address is now {}'.format(self.ip))
-                        break
-                else:
-                    raise Failure('unable to find a static IP address on interface {} to use as the source IP'.format(ifname))
+            for (optname, optdesc) in [
+                ('macid',      "MAC address"),
+                ('altmacid',   "alternate MAC address"),
+                ('mediamacid', "media MAC address")
+            ]:
+                setattr(self, optname, self.deref_mac_address(data.get(optname), optdesc))
 
-            if self.macid.startswith('(') and self.macid.endswith(')'):
-                ifname = self.macid.strip('()')
-                logger.debug('using interface {} for MAC address'.format(ifname))
-                try:
-                    with open('/sys/class/net/{}/address'.format(ifname)) as fdes:
-                        self.macid = fdes.read().strip()
-                    logger.debug('MAC address is now {}'.format(self.macid))
-                except:
-                    raise Failure('unable to read MAC address for interface {} ({!s})'.format(ifname, e))
-
-            self.name = data.get('name')
+            for optname in [ 'name', 'description', 'venue', 'hdserial', 'ca' ]:
+                setattr(self, optname, data.get(optname))
 
         except KeyError as e:
             raise Failure('option "{}" missing on section "ems"'.format(e))
@@ -426,7 +448,22 @@ parser.add_argument('args', nargs='*', help='arguments passed directly to the "s
 
 opts = parser.parse_args()
 
+logger.debug('arguments: {!s}'.format(opts))
+
 ####
+
+notes = False
+
+if opts.no_restart:
+    print("NOTE: Network will not be restarted, changes will not be fully applied until restart!")
+    notes = True
+
+if opts.no_request:
+    print("NOTE: EMS server will not be contacted!")
+    notes = True
+
+if notes:
+    print()
 
 try:
     ifaces, changed = set(), False
@@ -777,19 +814,20 @@ try:
             # check each argument from config, if present on opts.args, if not add it
             cmdargs = ['./server-request' ] + opts.args
 
-            def check_append(param, value, msg):
+            def check_append(param, value, name=None):
                 arg, argeq = '--{}'.format(param), '--{}='.format(param)
-                if value is not None and arg not in opts.args and \
-                   next((False for e in opts.args if e.startswith(argeq)), True):
-                    cmdargs.extend([arg, value])
-                else:
-                    p.message('{} (using command line)'.format(msg))
+                if value is not None:
+                    if arg not in opts.args and \
+                       next((False for e in opts.args if e.startswith(argeq)), True):
+                        cmdargs.extend([arg, value])
+                    else:
+                        p.message('Overriding {} (using command line)'.format(msg,
+                            'option "{}"'.format(param) if name is None else name))
 
             for param in [ e.name for e in fields(config.ems.__class__) ]:
-                check_append(param, getattr(config.ems, param),
-                    '+ Overriding option "{}"'.format(param))
+                check_append(param, getattr(config.ems, param))
 
-            check_append('key', api_key, '+ Overriding SBC REST API key')
+            check_append('key', api_key, name='SBC REST API key')
 
             proc = None
             with open('/dev/null') as fdnil:

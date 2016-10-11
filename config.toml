@@ -1,7 +1,7 @@
 
 [ems]
-server = '10.10.11.3'               # Server IP address
-current = 'emskey'                  # EMS key for current provisioning
+server = '10.10.11.3'               # Server address or address:port
+current = '{"_id": "emskey"}'       # EMS parameters for current provisioning
 ip = '(eth0)'                       # Public IP address of appliance - use "(<ifname>)" for selecting the first address of interface <ifname> automatically.
 macid = '(eth0)'                    # MAC address of external interface -  use "(<ifname>)" for using the MAC address of <ifname> automatically.
 

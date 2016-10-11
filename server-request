@@ -70,7 +70,7 @@ class ServerRequest{
         $out.= "  --ip          IP address of the SBC (same IP used for connecting to EMS)\n";
         $out.= "  --server      Server socket where request should be sent\n";
         $out.= "  --key         REST API key\n";
-        $out.= "  --current     A string which will be provided by us as an identifier to validate the API call\n";
+        $out.= "  --current     An identifier used to validate the API call\n";
         $out.= "  --macid       MAC address of the primary ethernet port\n";
         $out.= "  --name        An unique name for the SBC\n";
         $out.= "  --description Description for the particular SBC\n";
@@ -78,8 +78,8 @@ class ServerRequest{
         $out.= "  --altmacid    MAC address of secondary ethernet port, if any\n";
         $out.= "  --mediamacid  MAC Address of media interface\n";
         $out.= "  --hdserial    Serial number of the hard disk\n";
-        $out.= "  --ca          PEM file for secure connection. If not present, uses HTTP request instead of HTTPS\n";
-        $out.= "  --config      Alternativelly, a config file (.ini) with command line parameters.\n";
+        $out.= "  --ca          PEM file for secure connection (HTTP is used if not present)\n";
+        $out.= "  --config      Alternativelly, a config file (.ini) with command line parameters\n";
         $out.= "                Command line parameters override parameters on config file\n";
         return $out;
     }
