@@ -815,7 +815,7 @@ try:
             if global_request[key] != global_current[key]:
                 break
         else:
-            p.skip('+ Global options not changed from current options.')
+            p.skip('+ No change required on settings.')
 
         api.network.configuration.update(global_request)
         changed = True
