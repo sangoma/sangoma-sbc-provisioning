@@ -517,7 +517,7 @@ try:
                                   .format(update_version, minimum_version))
 
         if current_version >= minimum_version:
-            p.done('+ OK, version supported (current = {0}, minimum = {1})'\
+            p.done('+ OK, version supported, no update required (current = {0}, minimum = {1})'\
                    .format(current_version, minimum_version))
         else:
             raise Failure('current version is {0}, minimum required is {1} - cannot proceed'\
@@ -636,8 +636,8 @@ try:
                             changed = True
                             p.message('+ Remapped IP for factory profile "{}"'.format(factory_sip_p))
                             break
-                        else:
-                            raise Failure('unable to allocate port for SIP profile {} on loopback interface'.format(factory_sip_p))
+                    else:
+                        raise Failure('unable to allocate port for SIP profile {} on loopback interface'.format(factory_sip_p))
 
             except ObjectNotFound as e:
                 p.message('+ Skipping SIP profiles changes - {}'.format(e))
@@ -705,6 +705,41 @@ try:
                 # DEBUG print("Creating IP {0} with data: {1}".format(object_name, str(postdata)))
                 api.network.ip.create(object_name, postdata)
                 changed = True
+
+    with progress('Remapping profiles with IPs to be removed...') as p:
+        found = False
+        for ip_name, ip_data in network_ip_map.items():
+            interface, address = ip_data.get('interface'), ip_data.get('address', '')
+
+            if interface.startswith('lo') or interface.startswith('sngdsp'):
+                continue
+            if address.startswith('127.'):
+                continue
+
+            try:
+                for profile_name, _ in search_object(sip_profile_map,
+                    lambda x: x['sip-ip'] == ip_name,
+                    lambda: 'no matching SIP profile not found'):
+
+                    logger.debug('found profile {} matching IP {}'.format(profile_name, ip_name))
+                    p.tick()
+
+                    for port_num in range(5060, 5100):
+                        logger.debug('checking port {} on loopback IP {}'.format(port_num, loopback_ip))
+                        if sip_ip_port_profiles.get(loopback_ip, dict()).get(port_num, 0) == 0:
+                            api.sip.profile[profile_name].update({'sip-port': port_num, 'sip-ip': loopback_ip })
+                            changed, found = True, True
+                            p.message('+ Remapped IP for profile "{}"'.format(profile_name))
+                            break
+                        else:
+                            raise Failure('unable to allocate port for SIP profile {} on loopback interface'.format(profile_name))
+
+            except ObjectNotFound as e:
+                p.message('+ Skipping IP "{}" - {}'.format(ip_name, e))
+                found = True
+
+        if not found:
+            p.skip('+ No IPs need to be remapped.')
 
     with progress('Removing previous IP addresses...') as p:
         for ipname, ipdata in network_ip_map.items():
