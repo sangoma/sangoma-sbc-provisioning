@@ -31,7 +31,7 @@ server.
 Second step is to run the script - by default, calling it without any
 arguments will perform all the required steps automatically:
 
-  # /run.sh
+  # ./run.sh
 
 A few command line parameters are supported (shown below).
 
