@@ -318,8 +318,8 @@ class ConfigEMS(object):
                 value = fdes.read().strip()
             logger.debug('{} is now {}'.format(name, value))
             return value
-        except:
-            raise Failure('unable to read MAC address for interface {} ({!s})'.format(ifname, e))
+        except Exception as e:
+            raise Failure('unable to read MAC address for interface {}: {!s}'.format(ifname, e))
 
     def __init__(self, data, ips):
         try:
@@ -420,7 +420,10 @@ def dump_config(configobj):
 
 ####
 
-UPDATES_PATH = 'updates'
+UPDATES_DIR = 'updates'
+
+COMMON_PATH = os.path.abspath(os.path.dirname(sys.argv[0]))
+UPDATE_PATH = os.path.join(os.path.dirname(COMMON_PATH), UPDATES_DIR)
 
 IP_FIELDS_MAP = {
     'static': ('with address {address}/{prefix}', ['interface', 'address', 'proto'], ['address', 'prefix', 'interface', 'proto']),
@@ -481,10 +484,10 @@ try:
     update_do = False
 
     with progress('Checking for update packages..') as p:
-        if not os.path.exists(UPDATES_PATH):
+        if not os.path.exists(UPDATE_PATH):
             p.skip('No "updates" folder, skipping.')
 
-        pkgs = [ e for e in os.listdir(UPDATES_PATH) if e.startswith('nsc') and e.endswith('.tgz') ]
+        pkgs = [ e for e in os.listdir(UPDATE_PATH) if e.startswith('nsc') and e.endswith('.tgz') ]
         pkgs = sorted(pkgs, key=lambda s: map(lambda e: int(e) if e.isdigit() else e, s.split('.')), reverse=True)
 
         if len(pkgs) == 0:
@@ -507,14 +510,14 @@ try:
             if update_version > current_version:
                 if update_version > minimum_version:
                     update_do = True
-                    p.done('+ Update version = {0}, minimum version = {1}'
-                           .format(update_version, minimum_version))
+                    p.done('***** Performing update ***** (update = {0}, current = {1})'
+                           .format(update_version, current_version))
                 else:
                     raise Failure('update version is {0}, minimum required is {1} - cannot proceed'\
                                   .format(update_version, minimum_version))
 
         if current_version >= minimum_version:
-            p.done('+ Current version = {0}, minimum version = {1}'\
+            p.done('+ OK, version supported (current = {0}, minimum = {1})'\
                    .format(current_version, minimum_version))
         else:
             raise Failure('current version is {0}, minimum required is {1} - cannot proceed'\
@@ -525,7 +528,7 @@ try:
             logger.debug('executing {!s}'.format(args))
             proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
             for line in proc.stdout:
-                p.message(line)
+                p.message(line.strip())
 
             status = proc.wait()
             p.tick()
@@ -556,7 +559,7 @@ try:
                 p.skip('+ Swap space already activated')
 
         with progress('Uploading update package (this may take a few minutes)..'):
-            filepath = os.path.abspath(os.path.join('.', UPDATES_PATH, update_pkg))
+            filepath = os.path.join(UPDATE_PATH, update_pkg)
             api.update.package.upload(filepath)
 
         with progress('Running update procedure (this may take several minutes)..'):
@@ -812,7 +815,7 @@ try:
     try:
         with progress('Running EMS provisioning script...') as p:
             # check each argument from config, if present on opts.args, if not add it
-            cmdargs = ['./server-request' ] + opts.args
+            cmdargs = [os.path.join(COMMON_PATH, 'server-request') ] + opts.args
 
             def check_append(param, value, name=None):
                 arg, argeq = '--{}'.format(param), '--{}='.format(param)
@@ -821,7 +824,7 @@ try:
                        next((False for e in opts.args if e.startswith(argeq)), True):
                         cmdargs.extend([arg, value])
                     else:
-                        p.message('Overriding {} (using command line)'.format(msg,
+                        p.message('Overriding {} (using command line)'.format(\
                             'option "{}"'.format(param) if name is None else name))
 
             for param in [ e.name for e in fields(config.ems.__class__) ]:
