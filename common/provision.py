@@ -500,7 +500,7 @@ try:
         api = safe.api('localhost', port=81, specfile=SAFE_JSON if os.path.exists(SAFE_JSON) else None)
 
     current_version = None
-    minimum_version = Version(2,3,1)
+    minimum_version = Version(2,3,2)
 
     with progress('Checking minimum required NSC version') as p:
         current_version = Version.from_api_version(api.nsc.version.retrieve())
