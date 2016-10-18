@@ -6,6 +6,10 @@
     exit 1
 }
 
+major_version="1"
+minor_version="$(git rev-list --count HEAD 2>/dev/null)"
+
+[[ "$minor_version" = "" ]] && minor_version="0"
 
 set -eux
 
@@ -14,7 +18,7 @@ out_numb=$(printf "%x" "$out_tsmp")
 
 out_base="output/"
 out_path="${out_base}/mnt"
-out_file="${out_base}/provisioning-${out_numb}.img"
+out_file="${out_base}/provisioning-${major_version}.${minor_version}-${out_numb}.img"
 
 excludes()
 {
