@@ -508,7 +508,7 @@ try:
         if update_pkg is not None and not opts.no_update:
             update_version = Version.from_update_package(update_pkg)
             if update_version > current_version:
-                if update_version > minimum_version:
+                if update_version >= minimum_version:
                     update_do = True
                     p.done('***** Performing update ***** (update = {0}, current = {1})'
                            .format(update_version, current_version))
