@@ -24,21 +24,21 @@ First step is to adjust "config.toml" as required:
 
   # <favourite-editor> config.toml
 
-Provisioning is performed by calling the "run.sh" script, which runs all
-the steps required for initial configuration and registration on the EMS
+Provisioning is performed by calling the "configure.sh" script, which runs
+all the steps required for initial configuration and registration on the EMS
 server.
 
 Second step is to run the script - by default, calling it without any
 arguments will perform all the required steps automatically:
 
-  # ./run.sh
+  # ./configure.sh
 
 A few command line parameters are supported (shown below).
 
 
 ## Command line usage and options:
 
-  ./run.sh [provision-options] -- [request-options]
+  ./configure.sh [provision-options] -- [request-options]
 
   provisioning-options:
 
