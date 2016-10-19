@@ -493,7 +493,15 @@ def check_versions(opts, state):
                           .format(current_version, minimum_version))
 
 def setup_api_key(opts, state):
-    state.api_key = state.api.rest.apikey[API_KEY_NAME]['key']
+    if API_KEY_NAME not in state.api.rest.apikey.keys():
+        with progress('Setting up REST API "{}" key...'.format(API_KEY_NAME)) as p:
+            state.api.rest.apikey.create(API_KEY_NAME, {'description': 'Provisioning API key'})
+            state.changed = True
+
+    try:
+        state.api_key = state.api.rest.apikey[API_KEY_NAME]['key']
+    except Exception as e:
+        raise Failure('could not retrieve or find REST API key: {!s}'.format(e))
 
     with open('api.key', 'w') as fdes:
         print(state.api_key, file=fdes)
@@ -554,7 +562,7 @@ def updade_action(opts, state):
         raise Exit('Update successful! The system now requires a reboot before proceeding - please restart your system and re-run the provisioning script.')
 
     else:
-        message('No updates required - nothing to do', '')
+        message('No update required - nothing to do', '')
 
 @register_action('config')
 def config_action(opts, state):
@@ -823,11 +831,6 @@ def config_action(opts, state):
             state.api.network.apply()
         else:
             p.skip('+ No changes to apply.')
-
-    if API_KEY_NAME not in state.api.rest.apikey.keys():
-        with progress('Setting up REST API "{}" key...'.format(API_KEY_NAME)) as p:
-            state.api.rest.apikey.create(API_KEY_NAME, {'description': 'Provisioning API key'})
-            state.changed = True
 
     with progress('Configuration process finished - restarting network..'):
         if network_apply and not opts.no_restart:
