@@ -6,8 +6,13 @@
 This software performs initial network configuration and provisioning
 on EMS servers.
 
+A sample configuration file is provided on the provisioning package, which
+needs to be renamed from "config-sample-toml" to "config.toml" and placed
+in the root directory of the USB key OR the /provisioning directory -
+whichever is being used for provisioning.
+
 Options required for provisioning and initial network setup should be
-configured on the "config.toml" file, which contains documentation about
+configured in this "config.toml" file, which contains documentation about
 each supported option and defaults for most parameters.
 
 The "request" phase also supports some commands passed via command line,

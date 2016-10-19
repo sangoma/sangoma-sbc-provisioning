@@ -17,7 +17,7 @@ out_file="${out_base}/${out_name}.tgz"
 excludes()
 {
     local prog="$1"; shift
-    $prog --exclude '.git*' --exclude '*.log' --exclude "${out_base}" --exclude "updates*" "$@"
+    $prog --exclude '.git*' --exclude '*.log' --exclude "${out_base}" "$@"
 }
 
 excludes tar --transform "s#^[.]/\(.\+\)\$#${out_name}/\1#" -zcf $out_file .

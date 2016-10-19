@@ -14,11 +14,45 @@ import select
 import logging
 import subprocess
 import json
+import shutil
 
 from argparse import ArgumentParser
 
 import safe
 import toml
+
+####
+
+API_KEY_NAME = 'default'
+
+SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
+
+INSTALL_PATH = '/provisioning'
+
+COMMON_PATH = os.path.abspath(os.path.dirname(sys.argv[0]))
+ORIGIN_PATH = os.path.dirname(COMMON_PATH)
+PARENT_PATH = os.path.dirname(ORIGIN_PATH)
+
+UPDATE_BASE = 'updates'
+
+IP_FIELDS_MAP = {
+    'static': ('with address {address}/{prefix}', ['interface', 'address', 'proto'], ['address', 'prefix', 'interface', 'proto']),
+    'dhcp':   ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'peerdns', 'persistent', 'proto']),
+    'slaac':  ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'proto']),
+}
+
+
+####
+
+UPDATE_PATH = \
+    os.path.join(INSTALL_PATH, UPDATE_BASE) \
+        if ORIGIN_PATH == INSTALL_PATH else \
+            os.path.join(PARENT_PATH, UPDATE_BASE)
+
+CONFIG_PATH = \
+    INSTALL_PATH if ORIGIN_PATH == INSTALL_PATH else PARENT_PATH
+
+####
 
 logging.basicConfig(
     format='%(asctime)-15s [%(levelname)-8s] %(message)s',
@@ -383,7 +417,9 @@ class Config(object):
     @classmethod
     def load(cls, ifaces):
         try:
-            with open('config.toml') as fdes:
+            filename = os.path.join(CONFIG_PATH, 'config.toml')
+            logger.debug('opening config {}...'.format(filename))
+            with open(filename) as fdes:
                 data = toml.load(fdes)
             return Config(data, ifaces)
 
@@ -422,22 +458,6 @@ def dump_config(configobj):
 
 ####
 
-UPDATES_DIR = 'updates'
-
-COMMON_PATH = os.path.abspath(os.path.dirname(sys.argv[0]))
-UPDATE_PATH = os.path.join(os.path.dirname(COMMON_PATH), UPDATES_DIR)
-
-IP_FIELDS_MAP = {
-    'static': ('with address {address}/{prefix}', ['interface', 'address', 'proto'], ['address', 'prefix', 'interface', 'proto']),
-    'dhcp':   ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'peerdns', 'persistent', 'proto']),
-    'slaac':  ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'proto']),
-}
-
-API_KEY_NAME = 'default'
-
-SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
-
-####
 
 actions = OrderedDict()
 
@@ -453,10 +473,65 @@ def register_action(name):
 
 ####
 
+def copy_provision_files(opts, p):
+    if ORIGIN_PATH == INSTALL_PATH:
+        p.skip('+ Already running from system installation')
+
+    INSTALL_DEST = INSTALL_PATH + '.new'
+    INSTALL_PREV = INSTALL_PATH + '.old'
+
+    def rmtree(path):
+        logger.debug('removing "{}" recursively'.format(path))
+        shutil.rmtree(path)
+
+    def rename(src, dst):
+        logger.debug('renaming {} to {}'.format(src, dst))
+        os.rename(src, dst)
+
+    def copy(src, dst):
+        logger.debug('copying from {} to {}'.format(src, dst))
+        shutil.copy(src, dst)
+
+    try:
+        if os.path.exists(INSTALL_DEST):
+            rmtree(INSTALL_DEST)
+
+        shutil.copytree(ORIGIN_PATH, INSTALL_DEST)
+
+        for filename in os.listdir(PARENT_PATH):
+            copy_config = filename == 'config.toml'
+            copy_update = filename.startswith('nsc-') and filename.endswith('.tgz') and opts.copy_update
+
+            if copy_config or copy_update:
+                copy(os.path.join(PARENT_PATH, filename),
+                     os.path.join(INSTALL_DEST, UPDATE_BASE if copy_update else '', filename))
+
+        if os.path.exists(INSTALL_PATH):
+            rename(INSTALL_PATH, INSTALL_PREV)
+
+        rename(INSTALL_DEST, INSTALL_PATH)
+
+        if os.path.exists(INSTALL_PREV):
+            rmtree(INSTALL_PREV)
+
+    except:
+        # revert in case something goes wrong
+        if os.path.exists(INSTALL_PREV):
+            if os.path.exists(INSTALL_PATH):
+                rmtree(INSTALL_PATH)
+
+            rename(INSTALL_PREV, INSTALL_PATH)
+
+        e = sys.exc_info()[1]
+        raise Failure('could not install provisioning files: {!s} [{}]'.format(e, e.__class__.__name__))
+
+    p.done('+ Installed provisioning scripts on {}'.format(INSTALL_PATH))
+
+
 def check_versions(opts, state):
     with progress('Checking for update packages..') as p:
         if not os.path.exists(UPDATE_PATH):
-            p.skip('No "updates" folder, skipping.')
+            p.skip('No updates folder ({}), skipping.'.format(UPDATE_PATH))
 
         pkgs = [ e for e in os.listdir(UPDATE_PATH) if e.startswith('nsc') and e.endswith('.tgz') ]
         pkgs = sorted(pkgs, key=lambda s: map(lambda e: int(e) if e.isdigit() else e, s.split('.')), reverse=True)
@@ -469,28 +544,28 @@ def check_versions(opts, state):
 
 
     current_version = None
-    minimum_version = Version(2,3,2)
+    require_version = Version(2,3,2)
 
-    with progress('Checking minimum required NSC version') as p:
+    with progress('Checking required NSC version') as p:
         current_version = Version.from_api_version(state.api.nsc.version.retrieve())
 
         if state.update_pkg is not None and not opts.no_update:
             update_version = Version.from_update_package(state.update_pkg)
-            if update_version > current_version:
-                if update_version >= minimum_version:
+            if current_version != require_version:
+                if update_version == require_version:
                     state.update_do = True
                     p.done('***** Update will be performed ***** (update = {0}, current = {1})'
                            .format(update_version, current_version))
                 else:
-                    raise Failure('update version is {0}, minimum required is {1} - cannot proceed'\
-                                  .format(update_version, minimum_version))
+                    raise Failure('update version is {0}, required is {1} - cannot proceed'\
+                                  .format(update_version, require_version))
 
-        if current_version >= minimum_version:
-            p.done('+ OK, version supported, no update required (current = {0}, minimum = {1})'\
-                   .format(current_version, minimum_version))
+        if current_version == require_version:
+            p.done('+ OK, version supported, no update required (current = {0}, required = {1})'\
+                   .format(current_version, require_version))
         else:
-            raise Failure('current version is {0}, minimum required is {1} - cannot proceed'\
-                          .format(current_version, minimum_version))
+            raise Failure('current version is {0}, required is {1} - cannot proceed'\
+                          .format(current_version, require_version))
 
 def setup_api_key(opts, state):
     if API_KEY_NAME not in state.api.rest.apikey.keys():
@@ -942,6 +1017,8 @@ def main():
 
     parser.add_argument('--dump', action='store_true', default=False, help='dump the configuration data and exit')
 
+    parser.add_argument('--copy-update', action='store_true', default=False, help='also copy update package when installing on {}'.format(INSTALL_PATH))
+
     parser.add_argument('--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
     parser.add_argument('--no-restart', action='store_true', default=False, help='do not restart the network after configuration')
 
@@ -971,6 +1048,9 @@ def main():
 
         with progress('Loading configuration file...') as p:
             state.config = Config.load(state.ifaces)
+
+        with progress('Checking provisiong installation...') as p:
+            copy_provision_files(opts, p)
 
         with progress("Connecting to REST API...") as p:
             state.api = safe.api('localhost', port=81, specfile=SAFE_JSON if os.path.exists(SAFE_JSON) else None)
