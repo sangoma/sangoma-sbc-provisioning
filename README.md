@@ -38,15 +38,19 @@ A few command line parameters are supported (shown below).
 
 ## Command line usage and options:
 
-  ./configure.sh [provision-options] -- [request-options]
+  ./configure.sh [action] [provisioning-options] -- [request-options]
+
+  action:
+    all         perform all required provisioning actions (default)
+    update      check current version and perform update, if needed
+    config      check current configuration and apply new options, if needed
+    ems         register current server on EMS service
 
   provisioning-options:
 
     --dump         dump the configuration data and exit
-    --no-update    do not attempt update if an update package is present
     --force-apply  apply and restart network even if no changes have been made
     --no-restart   do not restart the network after configuration
-    --no-request   do not contact the server (via server-request script)
 
   request-options:
 

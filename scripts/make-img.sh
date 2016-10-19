@@ -19,7 +19,6 @@ out_numb=$(printf "%x" "$out_tsmp")
 out_base="output/"
 out_path="${out_base}/mnt"
 out_file="${out_base}/provisioning-${major_version}.${minor_version}-${out_numb}.img"
-out_tarz="${out_base}/provisioning-${major_version}.${minor_version}-${out_numb}.tar.gz"
 
 excludes()
 {
@@ -50,10 +49,6 @@ mkdir -p $out_path
 mount -o loop $out_file $out_path
 
 excludes rsync -axv . "$out_path"
-
-curpwd="$(pwd)"
-
-(cd $out_path && tar -zcf $curpwd/$out_tarz .)
 
 umount $out_path
 
