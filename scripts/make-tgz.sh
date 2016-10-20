@@ -20,4 +20,4 @@ excludes()
     $prog --exclude '.git*' --exclude '*.log' --exclude "${out_base}" "$@"
 }
 
-excludes tar --transform "s#^[.]/\(.\+\)\$#${out_name}/\1#" -zcf $out_file .
+excludes tar --owner=root --group=root --transform "s#^[.]/\(.\+\)\$#${out_name}/\1#" -zcf $out_file .

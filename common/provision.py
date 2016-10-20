@@ -41,6 +41,8 @@ IP_FIELDS_MAP = {
     'slaac':  ('for {hostname}', ['interface', 'proto'], ['hostname', 'interface', 'proto']),
 }
 
+PATCHES_BASE = 'patches'
+PATCHES_STATE_FMT = '/var/sng/patch.{}'
 
 ####
 
@@ -528,7 +530,7 @@ def copy_provision_files(opts, p):
     p.done('+ Installed provisioning scripts on {}'.format(INSTALL_PATH))
 
 
-def check_versions(opts, state):
+def check_version(opts, state):
     with progress('Checking for update packages..') as p:
         if not os.path.exists(UPDATE_PATH):
             p.skip('No updates folder ({}), skipping.'.format(UPDATE_PATH))
@@ -581,63 +583,105 @@ def setup_api_key(opts, state):
     with open('api.key', 'w') as fdes:
         print(state.api_key, file=fdes)
 
+
+def apply_patches(opts, state):
+    if opts.no_patches:
+        message('Skipping patches - disabled at command line.', '')
+        return
+
+    if state.update_do:
+        message('Skipping patches - update will be performed.', '')
+        return
+
+    if not os.path.exists(PATCHES_BASE):
+        message('Skipping patches - no files found', '')
+        return
+
+    def execute(args, p):
+        logger.debug('executing {!s}'.format(args))
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for line in proc.stdout:
+            p.message(line.strip())
+
+        status = proc.wait()
+        p.tick()
+
+        if status != 0:
+            raise Failure('unable to apply patch ({})'.format(
+                'rc={!s}'.format(status) if status > 0 else 'sig={!s}'.format(0-status)))
+
+    for filename in os.listdir(PATCHES_BASE):
+        with progress('Applying patch "{}"...'.format(filename)) as p:
+            statefile = PATCHES_STATE_FMT.format(filename)
+            if os.path.exists(statefile):
+                p.skip('+ Patch already applied')
+
+            execute([ 'tar', '-C', '/', '-zxf', os.path.abspath(os.path.join(PATCHES_BASE, filename)) ], p)
+
+            logger.debug('touching {}'.format(statefile))
+            with open(statefile, 'w') as fdes:
+                pass
+
+            p.done('+ Successfully applied patch!')
+
 ####
 
 @register_action('update')
 def updade_action(opts, state):
-    if state.update_do:
-        def execute(args, errmsg, p):
-            logger.debug('executing {!s}'.format(args))
-            proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            for line in proc.stdout:
-                p.message(line.strip())
-
-            status = proc.wait()
-            p.tick()
-
-            if status != 0:
-                raise Failure('{} ({})'.format(errmsg,
-                    'rc={!s}'.format(status) if status > 0 else 'sig={!s}'.format(0-status)))
-
-        with progress('Checking swap space (preparing for update)') as p:
-            SWAP_FILE = '/.swap00'
-
-            if not os.path.exists(SWAP_FILE):
-
-                execute(['dd', 'if=/dev/zero', 'of={}'.format(SWAP_FILE), 'bs=4M', 'count=192'],
-                        'swap creation failed', p)
-
-                execute(['mkswap', '-v1', SWAP_FILE],
-                        'swap format failed', p)
-
-            if os.system('grep -q "^{}" /proc/swaps 2>/dev/null'.format(SWAP_FILE)) != 0:
-
-                execute(['swapon', SWAP_FILE],
-                        'swap activation failed', p)
-
-                p.done('+ Swap space activated successfully')
-
-            else:
-                p.skip('+ Swap space already activated')
-
-        with progress('Uploading update package (this may take a few minutes)..'):
-            filepath = os.path.join(UPDATE_PATH, state.update_pkg)
-            state.api.update.package.upload(filepath)
-
-        with progress('Running update procedure (this may take several minutes)..'):
-            state.api.update.package.install()
-
-        with progress('Running post-update procedures...') as p:
-            execute(['swapoff', SWAP_FILE],
-                    'swap de-activation failed', p)
-
-            execute(['rm', '-f', SWAP_FILE],
-                    'swap deletion failed', p)
-
-        raise Exit('Update successful! The system now requires a reboot before proceeding - please restart your system and re-run the provisioning script.')
-
-    else:
+    if not state.update_do:
         message('No update required - nothing to do', '')
+        return
+
+    def execute(args, errmsg, p):
+        logger.debug('executing {!s}'.format(args))
+        proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        for line in proc.stdout:
+            p.message(line.strip())
+
+        status = proc.wait()
+        p.tick()
+
+        if status != 0:
+            raise Failure('{} ({})'.format(errmsg,
+                'rc={!s}'.format(status) if status > 0 else 'sig={!s}'.format(0-status)))
+
+    with progress('Checking swap space (preparing for update)') as p:
+        SWAP_FILE = '/.swap00'
+
+        if not os.path.exists(SWAP_FILE):
+
+            execute(['dd', 'if=/dev/zero', 'of={}'.format(SWAP_FILE), 'bs=4M', 'count=192'],
+                    'swap creation failed', p)
+
+            execute(['mkswap', '-v1', SWAP_FILE],
+                    'swap format failed', p)
+
+        if os.system('grep -q "^{}" /proc/swaps 2>/dev/null'.format(SWAP_FILE)) != 0:
+
+            execute(['swapon', SWAP_FILE],
+                    'swap activation failed', p)
+
+            p.done('+ Swap space activated successfully')
+
+        else:
+            p.skip('+ Swap space already activated')
+
+    with progress('Uploading update package (this may take a few minutes)..'):
+        filepath = os.path.join(UPDATE_PATH, state.update_pkg)
+        state.api.update.package.upload(filepath)
+
+    with progress('Running update procedure (this may take several minutes)..'):
+        state.api.update.package.install()
+
+    with progress('Running post-update procedures...') as p:
+        execute(['swapoff', SWAP_FILE],
+                'swap de-activation failed', p)
+
+        execute(['rm', '-f', SWAP_FILE],
+                'swap deletion failed', p)
+
+    raise Exit('Update successful! The system now requires a reboot before proceeding - please restart your system and re-run the provisioning script.')
+
 
 @register_action('config')
 def config_action(opts, state):
@@ -1017,6 +1061,8 @@ def main():
 
     parser.add_argument('--dump', action='store_true', default=False, help='dump the configuration data and exit')
 
+    parser.add_argument('--no-patches', action='store_true', default=False, help='do not apply any patches on system')
+
     parser.add_argument('--copy-update', action='store_true', default=False, help='also copy update package when installing on {}'.format(INSTALL_PATH))
 
     parser.add_argument('--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
@@ -1060,8 +1106,10 @@ def main():
             print()
             return 0
 
-        check_versions(opts, state)
+        check_version(opts, state)
         setup_api_key(opts, state)
+        apply_patches(opts, state)
+
         actions[opts.action](opts, state)
         return 0
 
