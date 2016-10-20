@@ -186,9 +186,12 @@ def progress(*args, **kwargs):
         logger.warning('procedure/exception ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
         print('\r( FAILURE )')
         control.flush()
+        print()
         raise
 
     print('\r( SUCCESS )')
+    control.flush()
+    print()
 
 #######
 
@@ -551,7 +554,7 @@ def check_version(opts, state):
     with progress('Checking required NSC version') as p:
         current_version = Version.from_api_version(state.api.nsc.version.retrieve())
 
-        if state.update_pkg is not None and not opts.no_update:
+        if state.update_pkg is not None:
             update_version = Version.from_update_package(state.update_pkg)
             if current_version != require_version:
                 if update_version == require_version:
@@ -898,7 +901,7 @@ def config_action(opts, state):
                 del network_route_map[name]
 
                 if not validate_changed:
-                    p.skip('+ Route already present ({0}) on interface {1}, skipping creation..'.format(name, route_object.interface))
+                    p.message('+ Route already present ({0}) on interface {1}, skipping creation..'.format(name, route_object.interface))
 
             except ObjectNotFound as e:
                 if network_route_map.get(route_object.name):
@@ -909,6 +912,7 @@ def config_action(opts, state):
                     del network_route_map[route_object.name]
 
                 state.api.network.route.create(route_object.name, asdict(route_object, filter=(lambda a,_: a.name != 'name')))
+                p.message('+ Created route {0} on interface {1}'.format(route_object.name, route_object.interface))
                 state.changed = True
 
     with progress('Removing previous routes..') as p:
