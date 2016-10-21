@@ -137,9 +137,10 @@ class Version(object):
 
 ########
 
-def message(*args):
+def message(*args, **kwargs):
+    char = kwargs.get('char', ' ')
     for arg in args:
-        print(' '*11, arg)
+        print(char * 11, arg)
 
 class ProgressStatus(BaseException):
     def __init__(self, status, *args):
@@ -695,7 +696,8 @@ def updade_action(opts, state):
         execute(['rm', '-f', SWAP_FILE],
                 'swap deletion failed', p)
 
-    raise Exit('Update successful! The system now requires a reboot before proceeding - please restart your system and re-run the provisioning script.')
+    raise Exit('Update successful! The system now REQUIRES a reboot before proceeding with the provisioning.\n\n' + \
+               'Please restart your system and re-run the provisioning scripts installed on "{}".'.format(INSTALL_PATH))
 
 
 @register_action('config')
@@ -777,7 +779,7 @@ def config_action(opts, state):
         except ObjectNotFound as e:
             p.skip('+ Skipping - {}'.format(e))
 
-    message('Setting addresses from configuration...')
+    message('Setting addresses from configuration...', char='-')
 
     for ip_object in state.config.ips:
         if ip_object.interface.find('.') != -1:
@@ -1060,7 +1062,7 @@ def ems_action(opts, state):
         raise
 
 def run_action(name, action, opts, state):
-    print('>>>>>>>>>>> Running "{}" step...'.format(name))
+    message('Running "{}" step...'.format(name), char='>')
     action(opts, state)
 
 @register_action('all')
@@ -1100,7 +1102,7 @@ def main():
             print()
 
         if opts.action != 'all':
-            print('>>>>>>>>>>> Running single step "{}"...'.format(opts.action))
+            message('Running single step "{}"...'.format(opts.action), char='>')
             print()
 
         state = type('State', (object,),
