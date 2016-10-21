@@ -23,15 +23,25 @@ import toml
 
 ####
 
+logging.basicConfig(
+    format='%(asctime)-15s [%(levelname)-8s] %(message)s',
+    level=logging.DEBUG,
+    filename='results.log'
+)
+
+logger = logging.getLogger()
+
+####
+
 API_KEY_NAME = 'default'
 
 SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
 
-INSTALL_PATH = '/provisioning'
-
 COMMON_PATH = os.path.abspath(os.path.dirname(sys.argv[0]))
 ORIGIN_PATH = os.path.dirname(COMMON_PATH)
 PARENT_PATH = os.path.dirname(ORIGIN_PATH)
+
+INSTALL_PATH = '/provisioning'
 
 UPDATE_BASE = 'updates'
 
@@ -48,21 +58,23 @@ PATCHES_STATE_FMT = '/var/sng/patch.{}'
 
 UPDATE_PATH = \
     os.path.join(INSTALL_PATH, UPDATE_BASE) \
-        if ORIGIN_PATH == INSTALL_PATH else \
-            os.path.join(PARENT_PATH, UPDATE_BASE)
+        if ORIGIN_PATH == INSTALL_PATH else PARENT_PATH
 
 CONFIG_PATH = \
     INSTALL_PATH if ORIGIN_PATH == INSTALL_PATH else PARENT_PATH
 
+
 ####
 
-logging.basicConfig(
-    format='%(asctime)-15s [%(levelname)-8s] %(message)s',
-    level=logging.DEBUG,
-    filename='results.log'
-)
+logger.debug('install path: {}'.format(INSTALL_PATH))
 
-logger = logging.getLogger()
+logger.debug('origin path: {}'.format(ORIGIN_PATH))
+logger.debug('parent path: {}'.format(PARENT_PATH))
+
+logger.debug('config path: {}'.format(CONFIG_PATH))
+logger.debug('update path: {}'.format(UPDATE_PATH))
+
+####
 
 class Failure(Exception):
     pass
