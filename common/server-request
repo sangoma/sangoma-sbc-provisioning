@@ -93,9 +93,12 @@ class ServerRequest{
             $options[CURLOPT_CAINFO]=$this->args['ca'];
             unset($this->args['ca']);
         }
-        if(preg_match('#^\{"[^:]+:[^,\}]+[,\}]#',$this->args['current']))
-            $this->args['current'] = json_decode($this->args['current']);
-
+        if(isset($this->args['current']) && preg_match('#^\{"[^:]+:[^,\}]+[,\}]#',$this->args['current']))
+            $this->args['current'] = json_decode($this->args['current'],true);
+	else if(isset($this->args['current'])){
+	   $this->args['current'] = json_decode(json_encode(array('_id'=>$this->args['current'],'type'=>'admin','parent'=>null),true),true);
+	}	
+	
         unset($this->args['server']);
         unset($this->args['config']);
         $options = array(
@@ -107,10 +110,9 @@ class ServerRequest{
             CURLOPT_URL => $hasca? "https://".$server_socket."/devicesapi/devices/create" : "http://".$server_socket."/devicesapi/devices/create",
             //                         CURLOPT_CAINFO => self::CACERT_FILE,            
             CURLOPT_POST => true,
-            CURLOPT_POSTFIELDS => json_encode($this->args),
+            CURLOPT_POSTFIELDS => json_encode($this->args,true),
             CURLOPT_HTTPHEADER => array('Content-Type: application/json')
         );
-        
         $ch = curl_init();
         curl_setopt_array($ch, $options);
         $data = curl_exec($ch);
@@ -160,8 +162,12 @@ class ServerRequest{
             self::printMessage(array('status'=>false,'type'=>'local','message'=>"Error: Server ".$request->server." is unreachable"));
             exit(1);
         }else if(($response = $request->send()) && ((isset($response->status) && !$response->status) || (!isset($response->status) && !isset($response->id)))){
+	   if(isset($response->success) && !$response->success){
+	     self::printMessage(array('status'=>false,'type'=>'remote','message'=>$response->message));
+	   }else if(!isset($response->success)){
             self::printMessage(array('status'=>false,'type'=>'remote','message'=>(isset($response->description)? "Server Error: ".$response->description :
             "Server Error: Some kind of error happens, but server does not send back any description")));
+            }	
             exit(1);
         }else if(!$response){
             self::printMessage(array('status'=>false,'type'=>'remote','message'=>"Error: Connection server error"));
