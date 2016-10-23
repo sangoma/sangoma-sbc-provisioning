@@ -968,7 +968,12 @@ def config_action(opts, state):
 
     with progress('Applying network changes (may take a while)..') as p:
         if network_apply:
-            state.api.network.apply()
+            if not hasattr(state.api.network, 'apply'):
+                p.message('+ Reloaded API interface for applying')
+                api = safe.api('localhost', port=81)
+                api.network.apply()
+            else:
+                state.api.network.apply()
         else:
             p.skip('+ No changes to apply.')
 
