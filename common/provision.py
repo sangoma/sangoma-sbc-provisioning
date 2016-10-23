@@ -773,8 +773,12 @@ def config_action(opts, state):
 
             state.api.network.ip.delete(factory_net_ip)
             state.changed = True
+
             del network_ip_map[factory_net_ip]
-            del network_ip_vlans_map[factory_net_ip]
+
+            try: del network_ip_vlans_map[factory_net_ip]
+            except: pass
+
             p.done('+ Removed factory IP address')
 
         except ObjectNotFound as e:
@@ -790,8 +794,12 @@ def config_action(opts, state):
                     name, _ = next(search_object(network_iface_map,
                         lambda x: x['ifname'] == ifname and x.get('id') == ifnumber,
                         lambda: "not found"))
+
                     del network_iface_map[name]
-                    del network_ip_vlans_map[name]
+
+                    try: del network_ip_vlans_map[name]
+                    except: pass
+
                     p.skip('+ VLAN interface {0} already present ({1}), skipping creation..'.format(ip_object.interface, name))
                 except ObjectNotFound as e:
                     object_name = 'vlan_{}_{}'.format(ip_object.interface, random_bytes())
@@ -829,7 +837,10 @@ def config_action(opts, state):
                     p.message('+ Interface {{interface}} already has a {{proto}} IP {0}'.format(debug_info).format(**asdict(ip_object)))
 
                 del network_ip_map[name]
-                del network_ip_vlans_map[name]
+
+                try: del network_ip_vlans_map[name]
+                except: pass
+
                 p.skip('')
 
             except ObjectNotFound as e:
