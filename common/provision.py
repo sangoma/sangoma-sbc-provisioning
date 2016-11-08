@@ -139,8 +139,9 @@ class Version(object):
 
 def message(*args, **kwargs):
     char = kwargs.get('char', ' ')
+    ends = kwargs.get('end', '\n')
     for arg in args:
-        print(char * 11, arg)
+        print(char * 11, arg, end=ends)
 
 class ProgressStatus(BaseException):
     def __init__(self, status, *args):
@@ -739,50 +740,14 @@ def config_action(opts, state):
             ipdata = dict(ipdata, interface=vlan_iface)
         network_ip_vlans_map[ipname] = ipdata
 
-
     loopback_ip, _ = next(search_object(network_ip_map,
         lambda x: x['address'] == '127.0.0.1',
         lambda: 'loopback address not found'))
 
-    with progress('Clearing factory configuration...') as p:
-        try:
-            factory_net_ip, _ = next(search_object(network_ip_map,
-                lambda x: x['address'] == '192.168.168.2',
-                lambda: 'factory IP address not found'))
-
+    with progress('Normalizing services configuration..') as p:
+        for obj in [ state.api.webconfig, state.api.sshd ]:
+            obj.configuration['interface'] = 'all'
             p.tick()
-
-            try:
-                for factory_sip_p, _ in search_object(sip_profile_map,
-                    lambda x: x['sip-ip'] == factory_net_ip,
-                    lambda: 'factory SIP profile not found'):
-
-                    p.tick()
-
-                    for port_num in range(5060, 5100):
-                        if sip_ip_port_profiles.get(loopback_ip, dict()).get(port_num, 0) == 0:
-                            state.api.sip.profile[factory_sip_p].update({'sip-port': port_num, 'sip-ip': loopback_ip })
-                            state.changed = True
-                            p.message('+ Remapped IP for factory profile "{}"'.format(factory_sip_p))
-                            break
-                    else:
-                        raise Failure('unable to allocate port for SIP profile {} on loopback interface'.format(factory_sip_p))
-
-            except ObjectNotFound as e:
-                p.message('+ Skipping SIP profiles changes - {}'.format(e))
-
-            state.api.network.ip.delete(factory_net_ip)
-            state.changed = True
-
-            del network_ip_map[factory_net_ip]
-
-            try: del network_ip_vlans_map[factory_net_ip]
-            except: pass
-
-            p.done('+ Removed factory IP address')
-
-        except ObjectNotFound as e:
-            p.skip('+ Skipping - {}'.format(e))
 
     message('Setting addresses from configuration...', char='-')
 
@@ -1080,6 +1045,28 @@ def ems_action(opts, state):
             print()
         raise
 
+@register_action('restore')
+def restore_action(opts, state):
+    if opts.template is None:
+        message('No template specified - not performing restore', '')
+        return
+
+    print()
+    message('WARNING: SYSTEM WILL REBOOT AFTER "RESTORE" IS PERFORMED', char='!')
+    message('WARNING: CONTINUE? (y/N)', char='!', end=' ')
+    proceed = sys.stdin.readline().strip()
+    print()
+
+    if proceed not in ['y', 'Y']:
+        message('Skipping restore...', '')
+        return
+
+    with progress('Performing restore from template "{0}"...'.format(opts.template)) as p:
+        res = state.api.nsc.archive.upload(opts.template)
+        p.message('+ Restoring archive {client_name} stored as {file_name}...'.format(**res))
+        state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
+        p.tick()
+
 def run_action(name, action, opts, state):
     message('Running "{}" step...'.format(name), char='>')
     action(opts, state)
@@ -1104,6 +1091,8 @@ def main():
 
     parser.add_argument('--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
     parser.add_argument('--no-restart', action='store_true', default=False, help='do not restart the network after configuration')
+
+    parser.add_argument('--template', metavar='FILE', help='use FILE as a template backup package to restore from')
 
     parser.add_argument('action', nargs='?', default='all', help='action to perform - {} (default: all)'.format(', '.join(actions)))
     parser.add_argument('args', metavar='request-args', nargs='*', help='arguments passed directly to the "server-request" script.')
