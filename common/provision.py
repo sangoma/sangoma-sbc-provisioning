@@ -33,6 +33,12 @@ logger = logging.getLogger()
 
 ####
 
+PATCH_TABLE = {
+    'token-auth-safe-js.tar.gz':  (2,3,2),
+    'sip-profile-status.tar.gz':  (2,3,2),
+    'skip-api-rest.tar.gz':       (2,3,2),
+}
+
 API_KEY_NAME = 'default'
 
 SAFE_JSON = '/usr/local/sng/cli/libs/product_release/safepy_def.json'
@@ -567,6 +573,7 @@ def check_version(opts, state):
 
     with progress('Checking required NSC version') as p:
         current_version = Version.from_api_version(state.api.nsc.version.retrieve())
+        state.current_version = current_version
 
         if state.update_pkg is not None:
             update_version = Version.from_update_package(state.update_pkg)
@@ -632,6 +639,14 @@ def apply_patches(opts, state):
             statefile = PATCHES_STATE_FMT.format(filename)
             if os.path.exists(statefile):
                 p.skip('+ Patch already applied')
+
+            version = PATCH_TABLE.get(filename)
+            if version is None:
+                p.skip('+ Patch not found on internal table, skipping...')
+
+            version = Version(version)
+            if version < state.current_version:
+                p.skip('+ Patch not needed, last version is {}'.format(version))
 
             execute([ 'tar', '-C', '/', '-zxf', os.path.abspath(os.path.join(PATCHES_BASE, filename)) ], p)
 
@@ -1116,7 +1131,8 @@ def main():
         state = type('State', (object,),
             dict(config=None, api=None, ifaces=set(),
                  update_pkg=None, update_do=False,
-                 changed=False, api_key=None))
+                 changed=False, api_key=None,
+                 current_version=None))
 
         with progress('Loading configuration file...') as p:
             state.config = Config.load(state.ifaces)
@@ -1153,7 +1169,7 @@ def main():
         excstring = str(e)
         if len(excstring) == 0:
             excstring = 'system/internal error'
-        excmsg = '{} ({})'.format(excstring, e.__class__.__name__).replace('\n', ' - ')
+        excmsg = '{} ({})'.format(excstring, e.__class__.__name__).replace('\n', '; ')
 
         print('\nERROR: {}'.format(excmsg), file=sys.stderr)
         logger.critical('configuration failed: {}'.format(excmsg))
