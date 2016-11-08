@@ -1078,7 +1078,7 @@ def restore_action(opts, state):
 
     with progress('Performing restore from template "{0}"...'.format(opts.template)) as p:
         res = state.api.nsc.archive.upload(opts.template)
-        p.message('+ Restoring archive {client_name} stored as {file_name}...'.format(**res))
+        p.message('+ Archive {client_name} uploaded as {file_name}'.format(**res))
         state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
         p.tick()
 
