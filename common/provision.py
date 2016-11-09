@@ -569,7 +569,7 @@ def check_version(opts, state):
 
 
     current_version = None
-    require_version = Version(2,3,2)
+    require_version = Version(2,3,3)
 
     with progress('Checking required NSC version') as p:
         current_version = Version.from_api_version(state.api.nsc.version.retrieve())
