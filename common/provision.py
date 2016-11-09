@@ -149,6 +149,22 @@ def message(*args, **kwargs):
     for arg in args:
         print(char * 11, arg, end=ends)
 
+def confirm_message(*args):
+    print()
+
+    for arg in args:
+        message('WARNING: {}'.format(arg), char='!')
+
+    message('WARNING: CONTINUE? (y/N)', char='!', end=' ')
+    proceed = sys.stdin.readline().strip()
+    print()
+
+    if proceed not in ['y', 'Y']:
+        message('Skipping, operation cancelled...', '')
+        return False
+
+    return True
+
 class ProgressStatus(BaseException):
     def __init__(self, status, *args):
         self.status = status
@@ -501,6 +517,13 @@ def register_action(name):
 def copy_provision_files(opts, p):
     if ORIGIN_PATH == INSTALL_PATH:
         p.skip('+ Already running from system installation')
+
+    if os.path.exists(INSTALL_PATH):
+        msgs = [ 'Provisioning files are already installed on "{}" current script is running on "{}"'.format(INSTALL_PATH, ORIGIN_PATH),
+                 'Re-running from outside "{}" will overwrite all the installed files and logs currently there.'.format(INSTALL_PATH) ]
+
+        if not confirm_message(*msgs):
+            return
 
     INSTALL_DEST = INSTALL_PATH + '.new'
     INSTALL_PREV = INSTALL_PATH + '.old'
@@ -1066,14 +1089,7 @@ def restore_action(opts, state):
         message('No template specified - not performing restore', '')
         return
 
-    print()
-    message('WARNING: SYSTEM WILL REBOOT AFTER "RESTORE" IS PERFORMED', char='!')
-    message('WARNING: CONTINUE? (y/N)', char='!', end=' ')
-    proceed = sys.stdin.readline().strip()
-    print()
-
-    if proceed not in ['y', 'Y']:
-        message('Skipping restore...', '')
+    if not confirm_message('SYSTEM WILL REBOOT AFTER "RESTORE" IS PERFORMED'):
         return
 
     with progress('Performing restore from template "{0}"...'.format(opts.template)) as p:

@@ -1,6 +1,1 @@
-Place your update packages here to have them automatically installed
-before initial provisioning is performed.
-
-If your NSC version is not the minimum required one for provisioning
-to be properly performed, this still is *required* to be able to run
-the provisioning procedure.
+This folder will be used for copying the update package, if requested.
