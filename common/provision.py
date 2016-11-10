@@ -10,6 +10,7 @@ from attr import attrs, attrib, Factory, asdict, fields
 
 import os
 import sys
+import stat
 import select
 import logging
 import subprocess
@@ -149,7 +150,7 @@ def message(*args, **kwargs):
     char = kwargs.get('char', ' ')
     ends = kwargs.get('end', '\n')
     for arg in args:
-        print(char * 11, arg, end=ends)
+        print(char * 3, arg, end=ends)
 
 def confirm_message(*args):
     print()
@@ -168,68 +169,62 @@ def confirm_message(*args):
     return True
 
 class ProgressStatus(BaseException):
-    def __init__(self, status, *args):
+    def __init__(self, status):
         self.status = status
-        self.args = args
 
 class ProgressControl(object):
+    TICKS = [ '|', '/', '-', '\\' ]
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
-        self.msgs = []
+        self.ticks = 0
+        self.lnbrk = False
 
     def tick(self):
         fd = self.kwargs.get('file', sys.stdout)
-        print('.', end='', **self.kwargs)
+        print(ProgressControl.TICKS[self.ticks], end='\r', **self.kwargs)
+        self.ticks = (self.ticks + 1) % len(ProgressControl.TICKS)
         fd.flush()
 
     def message(self, *msgs):
-        self.msgs.extend(list(msgs))
+        message(*msgs)
+        self.lnbrk = True
         self.tick()
 
     def skip(self, *msgs):
-        raise ProgressStatus('SKIPPED', *msgs)
+        self.message(*msgs)
+        raise ProgressStatus('SKIPPED')
 
     def fail(self, *msgs):
-        raise ProgressStatus('FAILURE', *msgs)
+        self.message(*msgs)
+        raise ProgressStatus('FAILURE')
 
     def done(self, *msgs):
-        raise ProgressStatus('SUCCESS', *msgs)
-
-    def flush(self):
-        message(*self.msgs)
+        self.message(*msgs)
+        raise ProgressStatus('SUCCESS')
 
 @contextmanager
 def progress(*args, **kwargs):
     fd = kwargs.get('file', sys.stdout)
-    control = None
+    control = ProgressControl(**kwargs)
 
     try:
-        print('(   ...   )', *args, end='', **kwargs)
-        logger.info(*args)
-
+        print(' =>', *args, **kwargs)
         fd.flush()
-        control = ProgressControl(**kwargs)
+        logger.info(*args)
         yield control
+        logger.info('procedure/DONE')
 
     except ProgressStatus as e:
-        print('\r( {} )'.format(e.status))
-        control.flush()
-        if len(e.args) != 0:
-            logger.info('procedure/{} ({!s})'.format(e.status, e.args))
-            message(*e.args)
-            print()
-        raise StopIteration()
+        logger.info('procedure/{}'.format(e.status))
 
     except:
         logger.warning('procedure/exception ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
-        print('\r( FAILURE )')
-        control.flush()
-        print()
+        print(' ')
         raise
 
-    print('\r( SUCCESS )')
-    control.flush()
-    print()
+    if control.lnbrk:
+        print(' ')
 
 #######
 
@@ -421,17 +416,27 @@ class ConfigEMS(object):
 
 
 @attrs(init=False)
+class ConfigUser(object):
+    username = attrib(None)
+    password = attrib(None)
+
+    def __init__(self, key, val):
+        self.username = key
+        self.password = val
+
+@attrs(init=False)
 class Config(object):
     ems = attrib(None)
     general = attrib(None)
     ips = attrib(Factory(list))
     routes = attrib(Factory(list))
+    users = attrib(Factory(list))
 
     def __init__(self, data, ifaces):
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
-            if cfgname in [ 'global', 'ems' ]:
+            if cfgname in [ 'global', 'users', 'ems' ]:
                 continue
             if isinstance(cfgdata, list):
                 physname = cfgname if cfgname.find('.') == -1 else cfgname[:cfgname.find('.')]
@@ -447,10 +452,18 @@ class Config(object):
             else:
                 raise Failure('configuration error: did you forget the double square brackets on "{}"?'.format(cfgdata))
 
-        self.ems = ConfigEMS(data['ems'], ips)
-        logger.debug('EMS network configuration: {!s}'.format(self.general))
-        self.general = ConfigNetwork(data['global'])
-        logger.debug('General network configuration: {!s}'.format(self.general))
+        try:
+            self.ems = ConfigEMS(data['ems'], ips)
+            logger.debug('EMS network configuration: {!s}'.format(self.general))
+            self.general = ConfigNetwork(data['global'])
+            logger.debug('General network configuration: {!s}'.format(self.general))
+        except KeyError as e:
+            raise Failure('missing section {!s} on configuration'.format(e))
+
+        self.users = list()
+        for key, val in data.get('users', dict()).items():
+            self.users.append(ConfigUser(key, val))
+        logger.debug('Users configuration: {!s}'.format(self.users))
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
@@ -517,7 +530,11 @@ def register_action(name):
 ####
 
 def copy_provision_files(opts, p):
+    configpath = os.path.join(INSTALL_PATH, 'config.toml')
+
     if ORIGIN_PATH == INSTALL_PATH:
+        try: os.chmod(configpath, stat.S_IRUSR|stat.S_IWUSR)
+        except: pass
         p.skip('+ Already running from system installation')
 
     if os.path.exists(INSTALL_PATH):
@@ -576,7 +593,8 @@ def copy_provision_files(opts, p):
         raise Failure('could not install provisioning files: {!s} [{}]'.format(e, e.__class__.__name__))
 
     p.done('+ Installed provisioning scripts on {}'.format(INSTALL_PATH))
-
+    try: os.chmod(configpath, stat.S_IRUSR|stat.S_IWUSR)
+    except: pass
 
 def check_version(opts, state):
     with progress('Checking for update packages..') as p:
@@ -661,10 +679,6 @@ def apply_patches(opts, state):
 
     for filename in os.listdir(PATCHES_BASE):
         with progress('Applying patch "{}"...'.format(filename)) as p:
-            statefile = PATCHES_STATE_FMT.format(filename)
-            if os.path.exists(statefile):
-                p.skip('+ Patch already applied')
-
             version = PATCH_TABLE.get(filename)
             if version is None:
                 p.skip('+ Patch not found on internal table, skipping...')
@@ -673,6 +687,11 @@ def apply_patches(opts, state):
             logger.debug('comparing versions: {!s} < {!s}'.format(version, state.current_version))
             if version < state.current_version:
                 p.skip('+ Patch not needed, last applicable version is {}'.format(version))
+
+            statefile = PATCHES_STATE_FMT.format(filename)
+            if os.path.exists(statefile):
+                p.skip('+ Patch already applied')
+
 
             execute([ 'tar', '-C', '/', '-zxf', os.path.abspath(os.path.join(PATCHES_BASE, filename)) ], p)
 
@@ -790,6 +809,28 @@ def config_action(opts, state):
             obj.configuration['interface'] = 'all'
             p.tick()
 
+    print(' ')
+    message('Configuring users..', char='-')
+
+    for user in state.config.users:
+        if user.password in [ False, True ]:
+            continue
+        if user.username in state.api.system.user.keys():
+            with progress('Setting password for user {}...'.format(user.username)) as p:
+                state.api.system.user[user.username].update({
+                    'secure/password': user.password, 'secure/verify': user.password, 'access': 'true'})
+        else:
+            with progress('Creating user {}...'.format(user.username)) as p:
+                state.api.system.user.create(user.username,
+                    {'secure/password': user.password, 'secure/verify': user.password})
+
+    for user in state.config.users:
+        if user.password not in [ False, True ]:
+            continue
+        with progress('{} user {}...'.format('Enabling' if user.password else 'Disabling', user.username)) as p:
+            state.api.system.user[user.username]['access'] = 'true' if user.password else 'false'
+
+    print(' ')
     message('Setting addresses from configuration...', char='-')
 
     for ip_object in state.config.ips:

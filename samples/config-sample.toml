@@ -5,6 +5,10 @@ current = '{"_id": "emskey"}'       # EMS parameters for current provisioning
 ip = '(eth0)'                       # Public IP address of appliance - use "(<ifname>)" for selecting the first address of interface <ifname> automatically.
 macid = '(eth0)'                    # MAC address of external interface -  use "(<ifname>)" for using the MAC address of <ifname> automatically.
 
+[users]
+admin = "sangoma"                   # Create user admin and/or set password to "sangoma"
+root = false                        # Disable the root user
+
 [["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
 type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
 address="10.10.10.2/24"             # IP address and network prefix.
