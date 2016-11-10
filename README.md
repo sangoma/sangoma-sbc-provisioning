@@ -27,7 +27,9 @@ or the interface (*macid options).
 
 First step is to adjust "config.toml" as required:
 
+```
   # <favourite-editor> config.toml
+```
 
 Provisioning is performed by calling the "configure.sh" script, which runs
 all the steps required for initial configuration and registration on the EMS
@@ -36,13 +38,16 @@ server.
 Second step is to run the script - by default, calling it without any
 arguments will perform all the required steps automatically:
 
+```
   # ./configure.sh
+```
 
 A few command line parameters are supported (shown below).
 
 
 ## Command line usage and options:
 
+```
   ./configure.sh [action] [provisioning-options] -- [request-options]
 
   action:
@@ -50,12 +55,20 @@ A few command line parameters are supported (shown below).
     update      check current version and perform update, if needed
     config      check current configuration and apply new options, if needed
     ems         register current server on EMS service
+    restore     restore the configuration backup from a template,
+                skipping network, license and REST API
 
   provisioning-options:
 
-    --dump         dump the configuration data and exit
-    --force-apply  apply and restart network even if no changes have been made
-    --no-restart   do not restart the network after configuration
+    --template FILE  use FILE as a template backup package to restore from
+
+    --dump           dump the configuration data and exit
+
+    --force-apply    apply and restart network even if no changes have been made
+    --no-restart     do not restart the network after configuration
+
+    --no-patches     do not apply any patches on system
+    --copy-update    also copy update package when installing on /provisioning
 
   request-options:
 
@@ -73,3 +86,4 @@ A few command line parameters are supported (shown below).
     --ca          PEM file for secure connection (HTTP is used if not present)
     --config      Alternativelly, a config file (.ini) with command line parameters.
                   Command line parameters override parameters on config file
+```
