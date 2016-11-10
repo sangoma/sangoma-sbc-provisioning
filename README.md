@@ -3,20 +3,32 @@
 
 ## Getting started
 
-This software performs initial network configuration and provisioning
-on EMS servers.
+This software provisions a newly installed system by performing initial
+configuration and registering the configured system on an EMS server.
 
-A sample configuration file is provided on the provisioning package, which
-needs to be renamed from "config-sample-toml" to "config.toml" and placed
-in the root directory of the USB key OR the /provisioning directory -
-whichever is being used for provisioning.
+The parameters and EMS server options come from a file in ToML format.
 
-Options required for provisioning and initial network setup should be
-configured in this "config.toml" file, which contains documentation about
-each supported option and defaults for most parameters.
+A sample ToML configuration file is provided on the provisioning package,
+which needs to be renamed from "config-sample.toml" to "config.toml" and
+placed in the root directory of the USB key OR the /provisioning directory
+(whichever is being used for provisioning). Options required for initial
+setup are documented in this sample file, which also has defaults for
+most parameters.
 
-The "request" phase also supports some commands passed via command line,
+There are a few differente "actions" supported, which are all executed
+in the following order if no action is specified:
+
+* update: Updates the system to the latest version (if required);
+* config: Configures the system using information in "config.toml";
+* request: Registers the current system in the EMS server;
+* restore: Restores extra configuration from a template file (if specified).
+
+The "request" action also supports some commands passed via command line,
 which override the values found in the configuration file (if specified).
+
+The "restore" action (optional) will restore additional system configuration
+from the configuration backup file passed to the "--template" comand line
+option. If this option is not provided, the step is skipped.
 
 Some options can be automatically inferred: a special format is supported
 for a few parameters section "EMS", namely "ip", "macid", "altmacid" and
