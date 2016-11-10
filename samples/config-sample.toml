@@ -6,8 +6,25 @@ ip = '(eth0)'                       # Public IP address of appliance - use "(<if
 macid = '(eth0)'                    # MAC address of external interface -  use "(<ifname>)" for using the MAC address of <ifname> automatically.
 
 [users]
-admin = "sangoma"                   # Create user admin and/or set password to "sangoma"
+
+# Creates user "admin" with the provided parameters as an inner table
+admin = { name = "Administrator", password = "sangoma", email = "admin@localhost" }
+
+dummy = "sangoma"                   # Create user "dummy" with password "sangoma"
 root = false                        # Disable the root user
+
+# Valid fields for "users" inner tables:
+#
+#  name, email, ssh-publickey - String values
+#  access, sudoer, ssh-enable - Boolean values (true/false)
+
+[notifier]
+check = true
+enable = true
+smtp-server = "127.0.0.1"
+smtp-port = 25
+smtp-user = "user"
+smtp-password = "letmein"
 
 [["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
 type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6

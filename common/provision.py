@@ -254,6 +254,11 @@ def normalize_dict(v):
         res[key.replace('__', '/')] = '' if val is None else val
     return res
 
+def stringify(v):
+    if isinstance(v, bool):
+        return 'true' if v else 'false'
+    return str(v)
+
 def search_object_name(base, name):
     for objname, objdata in base.items():
         if objname == name:
@@ -418,11 +423,70 @@ class ConfigEMS(object):
 @attrs(init=False)
 class ConfigUser(object):
     username = attrib(None)
-    password = attrib(None)
+    userdata = attrib(Factory(dict))
 
-    def __init__(self, key, val):
-        self.username = key
-        self.password = val
+    FIELDS = [ 'name', 'email', 'access', 'sudoer', 'ssh-enable', 'ssh-publickey' ]
+
+    def __init__(self, name, spec):
+        self.username = name
+
+        def password_fields(s, data):
+            if s is not None:
+                data.update({'secure/password': s, 'secure/verify': s})
+            return data
+
+        if isinstance(spec, bool):
+            self.userdata = dict(access='true' if spec else 'false')
+
+        elif isinstance(spec, basestring):
+            self.userdata = password_fields(spec, {'access': True})
+
+        elif isinstance(spec, dict):
+            password = spec.pop('password', None)
+
+            unknown = list()
+            for key in spec.keys():
+                if key in ConfigUser.FIELDS:
+                    continue
+                unknown.append(key)
+
+            if len(unknown) != 0:
+                raise Failure('unknown fields for user "{}": {!s}'.format(name, ', '.join(unknown)))
+
+            self.userdata = password_fields(password, {
+                key.replace('-', '/'): stringify(val) \
+                    for key, val in spec.items()
+                })
+
+        else:
+            raise Failure('unknown value for user "{}" configuration: {!s}'.format(name, spec))
+
+
+@attrs(init=False)
+class ConfigNotifier(object):
+    configuration = attrib(Factory(dict))
+
+    FIELDS = [ 'check', 'enable', 'smtp-server', 'smtp-port', 'smtp-user', 'smtp-password' ]
+
+    @classmethod
+    def normalize(cls, data):
+        def keyformat(key):
+            return key if key == 'check' else 'email/{}'.format(key.replace('-', '/'))
+
+        return { keyformat(key): stringify(val) for key, val in data.items() }
+
+    def __init__(self, data):
+        unknown = list()
+        for key in data.keys():
+            if key in ConfigNotifier.FIELDS:
+                continue
+            unknown.append(key)
+
+        if len(unknown) != 0:
+            raise Failure('unknown fields for notifier section: {!s}'.format(', '.join(unknown)))
+
+        self.configuration = ConfigNotifier.normalize(data)
+
 
 @attrs(init=False)
 class Config(object):
@@ -431,12 +495,13 @@ class Config(object):
     ips = attrib(Factory(list))
     routes = attrib(Factory(list))
     users = attrib(Factory(list))
+    notifier = attrib(None)
 
     def __init__(self, data, ifaces):
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
-            if cfgname in [ 'global', 'users', 'ems' ]:
+            if cfgname in [ 'global', 'ems', 'users', 'notifier' ]:
                 continue
             if isinstance(cfgdata, list):
                 physname = cfgname if cfgname.find('.') == -1 else cfgname[:cfgname.find('.')]
@@ -464,6 +529,13 @@ class Config(object):
         for key, val in data.get('users', dict()).items():
             self.users.append(ConfigUser(key, val))
         logger.debug('Users configuration: {!s}'.format(self.users))
+
+        notifier_section = data.get('notifier')
+        if notifier_section is not None:
+            self.notifier = ConfigNotifier(notifier_section)
+            logger.debug('Notifier configuration: {!s}'.format(self.notifier))
+        else:
+            logger.debug('No notifier section provided')
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
@@ -764,6 +836,27 @@ def updade_action(opts, state):
 
 @register_action('config')
 def config_action(opts, state):
+    print(' ')
+    message('Configuring users', char='-')
+
+    for user in state.config.users:
+        if user.username in state.api.system.user.keys():
+            with progress('Setting parameters for user "{}"...'.format(user.username)) as p:
+                state.api.system.user[user.username].update(user.userdata)
+        else:
+            with progress('Creating user "{}"...'.format(user.username)) as p:
+                state.api.system.user.create(user.username, user.userdata)
+
+    print(' ')
+    message('Configuring notifier', char='-')
+    if state.config.notifier is not None:
+        with progress('Setting parameters for email notifier...') as p:
+            state.api.notifier.configuration.update(state.config.notifier.configuration)
+    else:
+        message('Skipping, no configuration provided')
+
+    print(' ')
+    message('Loading network configuration', char='-')
 
     network_ip_map    = retrieve_map(state.api.network.ip,        'Retrieving IP configuration...')
     network_iface_map = retrieve_map(state.api.network.interface, 'Retrieving interfaces configuration...')
@@ -811,28 +904,7 @@ def config_action(opts, state):
             p.tick()
 
     print(' ')
-    message('Configuring users..', char='-')
-
-    for user in state.config.users:
-        if user.password in [ False, True ]:
-            continue
-        if user.username in state.api.system.user.keys():
-            with progress('Setting password for user {}...'.format(user.username)) as p:
-                state.api.system.user[user.username].update({
-                    'secure/password': user.password, 'secure/verify': user.password, 'access': 'true'})
-        else:
-            with progress('Creating user {}...'.format(user.username)) as p:
-                state.api.system.user.create(user.username,
-                    {'secure/password': user.password, 'secure/verify': user.password})
-
-    for user in state.config.users:
-        if user.password not in [ False, True ]:
-            continue
-        with progress('{} user {}...'.format('Enabling' if user.password else 'Disabling', user.username)) as p:
-            state.api.system.user[user.username]['access'] = 'true' if user.password else 'false'
-
-    print(' ')
-    message('Setting addresses from configuration...', char='-')
+    message('Setting addresses from configuration', char='-')
 
     for ip_object in state.config.ips:
         if ip_object.interface.find('.') != -1:
@@ -876,8 +948,8 @@ def config_action(opts, state):
 
                 for field in validate_fields:
                     value = getattr(ip_object, field, None)
-                    if value is not None and value != network_ip_vlans_map[name][field]:
-                        p.message('+ Configured "{0}={1}"'.format(field, value))
+                    if value is not None and str(value) != str(network_ip_vlans_map[name][field]):
+                        p.message('+ Configuring "{0}={1}"'.format(field, value))
                         state.api.network.ip[name][field] = value
                         validate_changed = True
 
@@ -889,7 +961,7 @@ def config_action(opts, state):
                 try: del network_ip_vlans_map[name]
                 except: pass
 
-                p.skip('')
+                p.skip()
 
             except ObjectNotFound as e:
                 postdata = asdict_filter(ip_object, store_fields)
@@ -969,7 +1041,7 @@ def config_action(opts, state):
 
                 for field in validate_fields:
                     value = getattr(route_object, field, None)
-                    if value is not None and value != network_route_map[name][field]:
+                    if value is not None and str(value) != str(network_route_map[name][field]):
                         p.message('+ Setting "{0}={1}" for route {2} (on {3})...'.format(field, value, name, route_object.interface))
                         state.api.network.route[name][field] = value
                         validate_changed = True
