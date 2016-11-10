@@ -1,5 +1,5 @@
 
-# Sangoma SBC Initial Provisioning for Carriers 
+# Sangoma SBC Initial Provisioning for Carriers
 
 ## Getting started
 

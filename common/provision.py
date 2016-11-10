@@ -637,7 +637,7 @@ def check_version(opts, state):
                           .format(current_version, require_version))
 
 def setup_api_key(opts, state):
-    state.api.rest.configuration.update({'enable': 'true'})
+    state.api.rest.configuration.update({'api-key': 'true'})
     if API_KEY_NAME not in state.api.rest.apikey.keys():
         with progress('Setting up REST API "{}" key...'.format(API_KEY_NAME)) as p:
             state.api.rest.apikey.create(API_KEY_NAME, {'description': 'Provisioning API key'})
