@@ -17,6 +17,9 @@ import subprocess
 import json
 import shutil
 
+import threading
+import Queue
+
 from argparse import ArgumentParser
 
 import safe
@@ -179,6 +182,9 @@ class ProgressControl(object):
         self.kwargs = kwargs
         self.ticks = 0
         self.lnbrk = False
+        self.queue = Queue.Queue()
+        self.ticker = threading.Thread(target=self.timer)
+        self.ticker.start()
 
     def tick(self):
         fd = self.kwargs.get('file', sys.stdout)
@@ -191,17 +197,31 @@ class ProgressControl(object):
         self.lnbrk = True
         self.tick()
 
-    def skip(self, *msgs):
+    def finish(self, status, msgs):
         self.message(*msgs)
-        raise ProgressStatus('SKIPPED')
+        self.terminate()
+        raise ProgressStatus(status)
+
+    def timer(self):
+        while True:
+            try:
+                self.queue.get(True, 3)
+                return
+            except Queue.Empty:
+                self.tick()
+
+    def terminate(self):
+        self.queue.put(None)
+        self.ticker.join()
+
+    def skip(self, *msgs):
+        self.finish('SKIPPED', msgs)
 
     def fail(self, *msgs):
-        self.message(*msgs)
-        raise ProgressStatus('FAILURE')
+        self.finish('FAILURE', msgs)
 
     def done(self, *msgs):
-        self.message(*msgs)
-        raise ProgressStatus('SUCCESS')
+        self.finish('SUCCESS', msgs)
 
 @contextmanager
 def progress(*args, **kwargs):
@@ -213,6 +233,7 @@ def progress(*args, **kwargs):
         fd.flush()
         logger.info(*args)
         yield control
+        control.terminate()
         logger.info('procedure/DONE')
 
     except ProgressStatus as e:
