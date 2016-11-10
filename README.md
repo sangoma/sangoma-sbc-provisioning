@@ -1,5 +1,5 @@
 
-# NSC provisioning scripts for EMS
+# Sangoma SBC Initial Provisioning for Carriers 
 
 ## Getting started
 
