@@ -133,11 +133,13 @@ class Version(object):
         if len(lst) != 3:
             raise Failure('invalid version for package "{}": {}'.format(pkg, fields[1]))
 
+        logger.debug('building version from update: {!s}'.format(lst))
         return Version(*lst)
 
     @classmethod
     def from_api_version(cls, data):
         lst = map(int, [data['major_version'], data['minor_version'], data['patch_version']])
+        logger.debug('building version from API: {!s}'.format(lst))
         return Version(*lst)
 
 
@@ -667,9 +669,10 @@ def apply_patches(opts, state):
             if version is None:
                 p.skip('+ Patch not found on internal table, skipping...')
 
-            version = Version(version)
+            version = Version(*version)
+            logger.debug('comparing versions: {!s} < {!s}'.format(version, state.current_version))
             if version < state.current_version:
-                p.skip('+ Patch not needed, last version is {}'.format(version))
+                p.skip('+ Patch not needed, last applicable version is {}'.format(version))
 
             execute([ 'tar', '-C', '/', '-zxf', os.path.abspath(os.path.join(PATCHES_BASE, filename)) ], p)
 
