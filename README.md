@@ -99,3 +99,9 @@ A few command line parameters are supported (shown below).
     --config      Alternativelly, a config file (.ini) with command line parameters.
                   Command line parameters override parameters on config file
 ```
+
+# License
+
+Distributed under the GNU GPL 2 (see LICENSE file)
+
+Copyright (C) 2016 Sangoma Technologies Corp.
