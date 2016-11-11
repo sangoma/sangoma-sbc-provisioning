@@ -866,6 +866,9 @@ def updade_action(opts, state):
         execute(['rm', '-f', SWAP_FILE],
                 'swap deletion failed', p)
 
+    with progress('Updating firmware for DSP devices...'):
+        state.api.sngms.fwupdate()
+
     raise Exit('Update successful! The system now REQUIRES a reboot before proceeding with the provisioning.\n\n' + \
                'Please restart your system and re-run the provisioning scripts installed on "{}".'.format(INSTALL_PATH))
 
