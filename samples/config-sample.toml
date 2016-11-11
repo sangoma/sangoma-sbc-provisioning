@@ -5,7 +5,7 @@ current = '{"_id": "emskey"}'       # EMS parameters for current provisioning
 ip = '(eth0)'                       # Public IP address of appliance - use "(<ifname>)" for selecting the first address of interface <ifname> automatically.
 macid = '(eth0)'                    # MAC address of external interface -  use "(<ifname>)" for using the MAC address of <ifname> automatically.
 
-[users]
+[users]                             # User configuration
 
 # Creates user "admin" with the provided parameters as an inner table
 admin = { name = "Administrator", password = "sangoma", email = "admin@localhost" }
@@ -18,13 +18,13 @@ root = false                        # Disable the root user
 #  name, email, ssh-publickey - String values
 #  access, sudoer, ssh-enable - Boolean values (true/false)
 
-[notifier]
-check = true
-enable = true
-smtp-server = "127.0.0.1"
-smtp-port = 25
-smtp-user = "user"
-smtp-password = "letmein"
+[notifier]                          # Notification system configuration
+check = true                        # Shows warning box if notification is disabled
+enable = true                       # Enable the notification system
+smtp-server = "127.0.0.1"           # SMTP server where to send notifications
+smtp-port = 25                      # SMTP port for contacting server
+smtp-user = "user"                  # Username for SMTP server
+smtp-password = "pass"              # Password for SMTP server
 
 [["eth0"]]                          # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
 type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
@@ -76,3 +76,6 @@ dns1="8.8.8.8"                # Static Name server IP address.
 dns2="8.8.4.4"
 dns3=""
 dns4=""
+
+# [options]                     # Additional provisioning options
+# template="mytemplate.tgz"     # Template file to be restored after EMS registration

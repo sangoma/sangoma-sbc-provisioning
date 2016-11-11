@@ -511,6 +511,14 @@ class ConfigNotifier(object):
 
 
 @attrs(init=False)
+class ConfigOptions(object):
+    template = attrib(None)
+
+    def __init__(self, data):
+        self.template = data.get('template')
+
+
+@attrs(init=False)
 class Config(object):
     ems = attrib(None)
     general = attrib(None)
@@ -518,12 +526,13 @@ class Config(object):
     routes = attrib(Factory(list))
     users = attrib(Factory(list))
     notifier = attrib(None)
+    options = attrib(None)
 
     def __init__(self, data, ifaces):
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
-            if cfgname in [ 'global', 'ems', 'users', 'notifier' ]:
+            if cfgname in [ 'global', 'ems', 'users', 'notifier', 'options' ]:
                 continue
             if isinstance(cfgdata, list):
                 physname = cfgname if cfgname.find('.') == -1 else cfgname[:cfgname.find('.')]
@@ -538,6 +547,9 @@ class Config(object):
                         routes.append(ConfigRoute(cfgname, routename[6:], routedata))
             else:
                 raise Failure('configuration error: did you forget the double square brackets on "{}"?'.format(cfgdata))
+
+        self.options = ConfigOptions(data.get('options', dict()))
+        logger.debug('Options configuration: {!s}'.format(self.options))
 
         try:
             self.ems = ConfigEMS(data['ems'], ips)
@@ -576,6 +588,7 @@ class Config(object):
 
         except toml.TomlDecodeError as e:
             raise e
+
 
 def dump_config(configobj):
     def dump_keys(level, name, obj):
@@ -859,26 +872,23 @@ def updade_action(opts, state):
 
 @register_action('config')
 def config_action(opts, state):
-    print(' ')
-    message('Configuring users', char='-')
 
-    for user in state.config.users:
-        if user.username in state.api.system.user.keys():
-            with progress('Setting parameters for user "{}"...'.format(user.username)) as p:
-                state.api.system.user[user.username].update(user.userdata)
-        else:
-            with progress('Creating user "{}"...'.format(user.username)) as p:
-                state.api.system.user.create(user.username, user.userdata)
-
-    print(' ')
-    message('Configuring notifier', char='-')
     if state.config.notifier is not None:
         with progress('Setting parameters for email notifier...') as p:
             state.api.notifier.configuration.update(state.config.notifier.configuration)
-    else:
-        message('Skipping, no configuration provided')
 
-    print(' ')
+    if len(state.config.users) != 0:
+        with progress('Configuring users..') as p:
+            for user in state.config.users:
+                if user.username in state.api.system.user.keys():
+                    p.message('+ Setting parameters for user "{}"..'.format(user.username))
+                    state.api.system.user[user.username].update(user.userdata)
+                else:
+                    p.message('+ Creating user "{}"..'.format(user.username))
+                    state.api.system.user.create(user.username, user.userdata)
+    else:
+        print(' ')
+
     message('Loading network configuration', char='-')
 
     network_ip_map    = retrieve_map(state.api.network.ip,        'Retrieving IP configuration...')
@@ -1140,6 +1150,7 @@ def config_action(opts, state):
             else:
                 p.skip('+ No changes to apply, not restarting.')
 
+    print(' ')
 
 @register_action('ems')
 def ems_action(opts, state):
@@ -1225,15 +1236,17 @@ def ems_action(opts, state):
 
 @register_action('restore')
 def restore_action(opts, state):
-    if opts.template is None:
+    template = state.config.options.template if opts.template is None else opts.template
+
+    if template is None:
         message('No template specified - not performing restore', '')
         return
 
     if not confirm_message('SYSTEM WILL REBOOT AFTER "RESTORE" IS PERFORMED'):
         return
 
-    with progress('Performing restore from template "{0}"...'.format(opts.template)) as p:
-        res = state.api.nsc.archive.upload(opts.template)
+    with progress('Performing restore from template "{0}"...'.format(template)) as p:
+        res = state.api.nsc.archive.upload(template)
         p.message('+ Archive {client_name} uploaded as {file_name}'.format(**res))
         state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
         p.tick()
@@ -1252,18 +1265,18 @@ def all_actions(opts, state):
 ####
 
 def main():
-    parser = ArgumentParser(usage='%(prog)s [action] [options] -- [request-args]')
+    parser = ArgumentParser(usage='configure.sh [action] [options] -- [request-args]')
 
-    parser.add_argument('--dump', action='store_true', default=False, help='dump the configuration data and exit')
+    parser.add_argument('-d', '--dump', action='store_true', default=False, help='dump the configuration data and exit')
 
-    parser.add_argument('--no-patches', action='store_true', default=False, help='do not apply any patches on system')
+    parser.add_argument('-n', '--no-patches', action='store_true', default=False, help='do not apply any patches on system')
 
-    parser.add_argument('--copy-update', action='store_true', default=False, help='also copy update package when installing on {}'.format(INSTALL_PATH))
+    parser.add_argument('-c', '--copy-update', action='store_true', default=False, help='also copy update package when installing on {}'.format(INSTALL_PATH))
 
-    parser.add_argument('--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
-    parser.add_argument('--no-restart', action='store_true', default=False, help='do not restart the network after configuration')
+    parser.add_argument('-f', '--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
+    parser.add_argument('-R', '--no-restart', action='store_true', default=False, help='do not restart the network after configuration')
 
-    parser.add_argument('--template', metavar='FILE', help='use FILE as a template backup package to restore from')
+    parser.add_argument('-t', '--template', metavar='FILE', help='use FILE as a template backup package to restore from')
 
     parser.add_argument('action', nargs='?', default='all', help='action to perform - {} (default: all)'.format(', '.join(actions)))
     parser.add_argument('args', metavar='request-args', nargs='*', help='arguments passed directly to the "server-request" script.')
