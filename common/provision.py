@@ -199,7 +199,6 @@ class ProgressControl(object):
 
     def finish(self, status, msgs):
         self.message(*msgs)
-        self.terminate()
         raise ProgressStatus(status)
 
     def timer(self):
@@ -233,7 +232,6 @@ def progress(*args, **kwargs):
         fd.flush()
         logger.info(*args)
         yield control
-        control.terminate()
         logger.info('procedure/DONE')
 
     except ProgressStatus as e:
@@ -242,10 +240,13 @@ def progress(*args, **kwargs):
     except:
         logger.warning('procedure/exception ({!s})'.format(sys.exc_info()[1]).replace('\n', ' - '))
         print(' ')
+        control.terminate()
         raise
 
     if control.lnbrk:
         print(' ')
+
+    control.terminate()
 
 #######
 
@@ -557,6 +558,7 @@ class Config(object):
             logger.debug('Notifier configuration: {!s}'.format(self.notifier))
         else:
             logger.debug('No notifier section provided')
+            self.notifier = None
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
