@@ -637,16 +637,17 @@ def register_action(name):
 
 ####
 
-def copy_provision_files(opts, p):
+def copy_provision_files(opts):
     configpath = os.path.join(INSTALL_PATH, 'config.toml')
 
     if ORIGIN_PATH == INSTALL_PATH:
         try: os.chmod(configpath, stat.S_IRUSR|stat.S_IWUSR)
         except: pass
-        p.skip('+ Already running from system installation')
+        return
 
     if os.path.exists(INSTALL_PATH):
-        msgs = [ 'Provisioning files are already installed on "{}" current script is running on "{}"'.format(INSTALL_PATH, ORIGIN_PATH),
+        msgs = [ 'Provisioning files are already installed on "{}"!'.format(INSTALL_PATH),
+                 'Current provisioning is running on "{}".'.format(ORIGIN_PATH), '',
                  'Re-running from outside "{}" will overwrite all the installed files and logs currently there.'.format(INSTALL_PATH) ]
 
         if not confirm_message(*msgs):
@@ -667,40 +668,42 @@ def copy_provision_files(opts, p):
         logger.debug('copying from {} to {}'.format(src, dst))
         shutil.copy(src, dst)
 
-    try:
-        if os.path.exists(INSTALL_DEST):
-            rmtree(INSTALL_DEST)
+    with progress('Running provisiong installation...') as p:
+        try:
+            if os.path.exists(INSTALL_DEST):
+                rmtree(INSTALL_DEST)
 
-        shutil.copytree(ORIGIN_PATH, INSTALL_DEST)
+            shutil.copytree(ORIGIN_PATH, INSTALL_DEST)
 
-        for filename in os.listdir(PARENT_PATH):
-            copy_config = filename == 'config.toml'
-            copy_update = filename.startswith('nsc-') and filename.endswith('.tgz') and opts.copy_update
+            for filename in os.listdir(PARENT_PATH):
+                copy_config = filename == 'config.toml'
+                copy_update = filename.startswith('nsc-') and filename.endswith('.tgz') and opts.copy_update
 
-            if copy_config or copy_update:
-                copy(os.path.join(PARENT_PATH, filename),
-                     os.path.join(INSTALL_DEST, UPDATE_BASE if copy_update else '', filename))
+                if copy_config or copy_update:
+                    copy(os.path.join(PARENT_PATH, filename),
+                         os.path.join(INSTALL_DEST, UPDATE_BASE if copy_update else '', filename))
 
-        if os.path.exists(INSTALL_PATH):
-            rename(INSTALL_PATH, INSTALL_PREV)
-
-        rename(INSTALL_DEST, INSTALL_PATH)
-
-        if os.path.exists(INSTALL_PREV):
-            rmtree(INSTALL_PREV)
-
-    except:
-        # revert in case something goes wrong
-        if os.path.exists(INSTALL_PREV):
             if os.path.exists(INSTALL_PATH):
-                rmtree(INSTALL_PATH)
+                rename(INSTALL_PATH, INSTALL_PREV)
 
-            rename(INSTALL_PREV, INSTALL_PATH)
+            rename(INSTALL_DEST, INSTALL_PATH)
 
-        e = sys.exc_info()[1]
-        raise Failure('could not install provisioning files: {!s} [{}]'.format(e, e.__class__.__name__))
+            if os.path.exists(INSTALL_PREV):
+                rmtree(INSTALL_PREV)
 
-    p.done('+ Installed provisioning scripts on {}'.format(INSTALL_PATH))
+        except:
+            # revert in case something goes wrong
+            if os.path.exists(INSTALL_PREV):
+                if os.path.exists(INSTALL_PATH):
+                    rmtree(INSTALL_PATH)
+
+                rename(INSTALL_PREV, INSTALL_PATH)
+
+            e = sys.exc_info()[1]
+            raise Failure('could not install provisioning files: {!s} [{}]'.format(e, e.__class__.__name__))
+
+        p.done('+ Installed provisioning scripts on {}'.format(INSTALL_PATH))
+
     try: os.chmod(configpath, stat.S_IRUSR|stat.S_IWUSR)
     except: pass
 
@@ -1342,8 +1345,7 @@ def main():
         with progress('Loading configuration file...') as p:
             state.config = Config.load(state.ifaces)
 
-        with progress('Checking provisiong installation...') as p:
-            copy_provision_files(opts, p)
+        copy_provision_files(opts)
 
         with progress("Connecting to REST API...") as p:
             state.api = safe.api('localhost', port=81, specfile=SAFE_JSON if os.path.exists(SAFE_JSON) else None)
