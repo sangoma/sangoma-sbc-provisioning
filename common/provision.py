@@ -265,7 +265,7 @@ def asdict_filter(o, names):
 
 def compare_keys(a, b, keys):
     for key in keys:
-        if a.get(key) != b.get(key):
+        if str(a.get(key)) != str(b.get(key)):
             return False
 
     return True
@@ -794,21 +794,23 @@ def apply_patches(opts, state):
             raise Failure('unable to apply patch ({})'.format(
                 'rc={!s}'.format(status) if status > 0 else 'sig={!s}'.format(0-status)))
 
-    for filename in os.listdir(PATCHES_BASE):
-        with progress('Applying patch "{}"...'.format(filename)) as p:
+    with progress('Verifying patches to be applied...') as p:
+        for filename in os.listdir(PATCHES_BASE):
             version = PATCH_TABLE.get(filename)
             if version is None:
-                p.skip('+ Patch not found on internal table, skipping...')
+                p.message('+ Patch "{}" not found on internal table, skipping...'.format(filename))
+                continue
 
             version = Version(*version)
             logger.debug('comparing versions: {!s} < {!s}'.format(version, state.current_version))
             if version < state.current_version:
-                p.skip('+ Patch not needed, last applicable version is {}'.format(version))
+                p.message('+ Patch "{}" not needed - last applicable version is {}'.format(filename, version))
+                continue
 
             statefile = PATCHES_STATE_FMT.format(filename)
             if os.path.exists(statefile):
-                p.skip('+ Patch already applied')
-
+                p.message('+ Patch "{}" already applied'.format(filename))
+                continue
 
             execute([ 'tar', '-C', '/', '-zxf', os.path.abspath(os.path.join(PATCHES_BASE, filename)) ], p)
 
@@ -816,7 +818,7 @@ def apply_patches(opts, state):
             with open(statefile, 'w') as fdes:
                 pass
 
-            p.done('+ Successfully applied patch!')
+            p.message('+ Successfully applied patch "{}"!'.format(filename))
 
 ####
 
