@@ -1251,6 +1251,14 @@ def restore_action(opts, state):
         state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
         p.tick()
 
+    print('Restore executed successfully - the system will now reboot.')
+    print('')
+    print('Press ENTER to continue.')
+
+    sys.stdin.readline()
+
+    state.api.system.shutdown()
+
 def run_action(name, action, opts, state):
     message('Running "{}" step...'.format(name), char='>')
     action(opts, state)
