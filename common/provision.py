@@ -704,6 +704,14 @@ def copy_provision_files(opts, p):
     try: os.chmod(configpath, stat.S_IRUSR|stat.S_IWUSR)
     except: pass
 
+
+def check_service(opts, state):
+    status = state.api.nsc.service.status().get('status_text', 'UNKNOWN')
+
+    if status != 'STOPPED':
+        raise Failure('Cannot proceed - NSC is currently "{}". Please run "service nsc stop" before proceeding.'.format(status))
+
+
 def check_version(opts, state):
     with progress('Checking for update packages..') as p:
         if not os.path.exists(UPDATE_PATH):
@@ -1120,32 +1128,46 @@ def config_action(opts, state):
         state.api.network.configuration.update(global_request)
         state.changed = True
 
+    global_apply = False
     network_apply = state.changed or opts.force_apply
 
-    if not network_apply:
-        with progress('Verifying pending changes to apply..') as p:
-            for item in state.api.nsc.configuration.status().get('reload', dict()).get('items', list()):
-                if str(item.get('module', '')) != 'network':
-                    continue
-                network_apply = True
-                p.done('+ Found non-applied network changes.')
+    with progress('Verifying pending changes to apply..') as p:
+        global_apply = state.api.nsc.configuration.status().get('modified') == True
 
-            else:
-                p.skip('+ All network settings are up to date.')
+        if global_apply:
+            p.done('+ Found non-applied configuration changes.')
 
-    with progress('Applying network changes (may take a while)..') as p:
-        if network_apply:
-            if not hasattr(state.api.network, 'apply'):
-                p.message('+ Reloaded API interface for applying')
-                api = safe.api('localhost', port=81)
-                api.network.apply()
-            else:
-                state.api.network.apply()
+        if not global_apply and not network_apply:
+            p.skip('+ All settings are up to date.')
+
+    with progress('Applying changes (may take a while)..') as p:
+        def apirun(*args):
+            def getmethod(o):
+                return reduce(lambda o, e: getattr(o, e), args, o)
+
+            try:
+                getmethod(state.api)()
+            except AttributeError:
+                p.message('+ Reloading API interface..')
+
+                try:
+                    getmethod(safe.api('localhost', port=81))()
+                except AttributeError:
+                    raise Failure('unable to retrieve method {!s}() from API - cannot proceed'.format('.'.join(args)))
+
+        if global_apply:
+            p.message('+ Running full configuration apply..')
+            apirun('nsc','configuration','apply')
+
+        elif network_apply:
+            p.message('+ Running network configuration apply..')
+            apirun('network','apply')
+
         else:
             p.skip('+ No changes to apply.')
 
     with progress('Configuration process finished - restarting network..'):
-        if network_apply and not opts.no_restart:
+        if (global_apply or network_apply) and not opts.no_restart:
             state.api.network.restart()
         else:
             if opts.no_restart:
@@ -1254,13 +1276,14 @@ def restore_action(opts, state):
         state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
         p.tick()
 
-    print('Restore executed successfully - the system will now reboot.')
+    print('Restore executed successfully.')
     print('')
-    print('Press ENTER to continue.')
+    print('Press ENTER to continue and reboot the system.')
 
     sys.stdin.readline()
 
     state.api.system.shutdown()
+    raise Exit('System will now reboot in 5 seconds.')
 
 def run_action(name, action, opts, state):
     message('Running "{}" step...'.format(name), char='>')
@@ -1328,11 +1351,15 @@ def main():
             print()
             return 0
 
+        check_service(opts, state)
         check_version(opts, state)
         setup_api_key(opts, state)
         apply_patches(opts, state)
 
         actions[opts.action](opts, state)
+
+        print(' ')
+        print('All procedures executed successfully!')
         return 0
 
     except Exit as e:
