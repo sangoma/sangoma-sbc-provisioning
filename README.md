@@ -100,6 +100,62 @@ A few command line parameters are supported (shown below).
                   Command line parameters override parameters on config file
 ```
 
+
+## SBC Pre-Provisioning Step-by-Step
+
+### SBC pre-provisiong package contains three items 
+Located at ftp://ftp.sangoma.com/nsc/2.3/provisioning/
+
+1. config-sample.toml 
+2. SBC upgrade binary
+3. Provisioning scripts
+
+### Create USB Key
+
+1. Copy SBC pre-provisioning package to a USB KEY
+2. Copy config-sample.toml to config.toml
+3. Edit config.toml and specify SBC configuration
+
+### Connect Laptop to SBC
+
+1. Connect a Laptop to SBC via USB to RJ45 baby blue cable
+2. Open Putty and select a Serial COM port
+ * Device manager will display exact USB-Serial com port to use
+ * Specify 115200n81 configuration
+3. Log into the SBC using default credentials 
+ * root/sangoma
+4. Connect USB Key to Sangoma SBC USB port
+5. Mount USB
+ * Enterprise and SMB SBC: mount /dev/sdb1 /mnt
+ * Carrier SBC: mount /dev/sdc1 /mnt
+6. Change directory to /mnt
+7. Unzip the provisioning package
+ * tar xfz provisioning-<version>.tgz
+8. Change directory to provisioning directory
+
+### Run Configuration
+
+1. Run: ./configure.sh
+ * Contents of USB will be copid to /provisioing directory
+ * Configure will proceed to upgrade firmware 
+ * After firmware update the SBC will reboot
+
+After reboot proceed to /provisioning directory, there is no need to work from USB any more.
+
+1. Log in
+2. cd /provisioning
+3. Run: ./configure.sh
+ * This step will proceed with intial configuraiton
+  ** networking, user, notifications
+4. If EMS is configured
+ * SBC will try to connect to EMS
+
+At this point SBC should be able to connect to the LAN or Internet.
+
+1. Connect to SBC GUI via IP
+2. Proceed with the rest of the configuration
+
+
 # License
 
 Distributed under the GNU GPL 2 (see LICENSE file)
