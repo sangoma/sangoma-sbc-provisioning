@@ -8,6 +8,7 @@ from functools import wraps
 
 from attr import attrs, attrib, Factory, asdict, fields
 
+import re
 import os
 import sys
 import stat
@@ -394,18 +395,48 @@ class ConfigEMS(object):
     hdserial = attrib(None)
     ca = attrib(None)
 
+    def deref_system_ip_address(self):
+        if self.ip is None or not self.ip.startswith('(') or not self.ip.endswith(')'):
+            return False
+
+        ifname = self.ip.strip('()')
+        regex_ifname = re.compile('^[0-9]+[:][ ]+{0}[ ]+inet[ ]([0-9.]+)[/][0-9]+ '.format(ifname))
+
+        proc = subprocess.Popen(['/sbin/ip', '-o', 'addr', 'show'], stdout=subprocess.PIPE)
+
+        for line in proc.stdout:
+            m = regex_ifname.match(line)
+            if m is None:
+                continue
+            self.ip = m.group(1)
+            proc.terminate()
+            proc.wait()
+            return True
+
+        else:
+            raise Failure('interface {} has a dynamic IP address but no address was found on interface - unable to proceed'.format(ifname))
+
     def deref_ip_address(self, value, ips, name):
         if value is None or not value.startswith('(') or not value.endswith(')'):
             return value
         ifname = value.strip('()')
         logger.debug('using interface {} for {}'.format(ifname, name))
+        has_dynamic = False
         for ip in ips:
-            if ip.interface == ifname and ip.proto.startswith('static'):
-                value = ip.address
-                logger.debug('{} is now {}'.format(name, value))
-                return value
+            if ip.interface == ifname:
+                if ip.proto.startswith('static'):
+                    value = ip.address
+                    logger.debug('{} is now {}'.format(name, value))
+                    return value
+
+                if ip.proto.startswith('dhcp'):
+                    has_dynamic = True
         else:
-            raise Failure('unable to find a static IP address on interface {} to use as {}'.format(ifname, name))
+            if not has_dynamic:
+                raise Failure('unable to find a static IP address on interface {} to use as {}'.format(ifname, name))
+
+            logger.debug('dynamic IP for {}, skipping dereference until EMS action..'.format(ifname))
+            return value
 
     def deref_mac_address(self, value, name):
         if value is None or not value.startswith('(') or not value.endswith(')'):
@@ -1188,6 +1219,10 @@ def ems_action(opts, state):
 
     try:
         with progress('Executing EMS provisioning script...') as p:
+
+            if state.config.ems.deref_system_ip_address():
+                p.message('+ Using dynamic IP address "{}" as source IP reported for EMS server'.format(state.config.ems.ip))
+
             # check each argument from config, if present on request-args, if not add it
             cmdargs = [os.path.join(COMMON_PATH, 'server-request') ] + opts.args
 
