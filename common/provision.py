@@ -21,10 +21,12 @@ import shutil
 import threading
 import Queue
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 
 import safe
 import toml
+
+__version__ = 'git-HEAD'
 
 ####
 
@@ -583,8 +585,6 @@ class Config(object):
         logger.debug('Options configuration: {!s}'.format(self.options))
 
         try:
-            self.ems = ConfigEMS(data['ems'], ips)
-            logger.debug('EMS network configuration: {!s}'.format(self.general))
             self.general = ConfigNetwork(data['global'])
             logger.debug('General network configuration: {!s}'.format(self.general))
         except KeyError as e:
@@ -602,6 +602,14 @@ class Config(object):
         else:
             logger.debug('No notifier section provided')
             self.notifier = None
+
+        ems_section = data.get('ems')
+        if ems_section is not None:
+            self.ems = ConfigEMS(ems_section, ips)
+            logger.debug('EMS configuration: {!s}'.format(self.general))
+        else:
+            logger.debug('No EMS section provided')
+            self.ems = None
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
@@ -656,12 +664,12 @@ def dump_config(configobj):
 
 actions = OrderedDict()
 
-def register_action(name):
+def register_action(name, auto=False):
     def apply(fn):
         @wraps(fn)
         def wrapper(*args, **kwargs):
             return fn(*args, **kwargs)
-        actions[name] = wrapper
+        actions[name] = dict(fun=wrapper, auto=auto)
         return wrapper
 
     return apply
@@ -677,9 +685,20 @@ def copy_provision_files(opts):
         return
 
     if os.path.exists(INSTALL_PATH):
-        msgs = [ 'Provisioning files are already installed on "{}"!'.format(INSTALL_PATH),
-                 'Current provisioning is running on "{}".'.format(ORIGIN_PATH), '',
-                 'Re-running from outside "{}" will overwrite all the installed files and logs currently there.'.format(INSTALL_PATH) ]
+
+        proc = subprocess.Popen(['awk', '-F[\'= ]+', '/^__version__[ \t]+=/ { print $2 }',
+                                 os.path.join(INSTALL_PATH, 'common/provision.py')],
+                                stdout=subprocess.PIPE)
+
+        version = proc.communicate()[0].strip()
+        version = version if len(version) != 0 else '<unknown>'
+
+        if proc.returncode != 0:
+            logger.warning('awk returned {}'.format(proc.returncode))
+
+        msgs = [ 'Provisioning files are already installed on "{0}" (version {1})!'.format(INSTALL_PATH, version),
+                 'Current provisioning is running on "{0}".'.format(ORIGIN_PATH), '',
+                 'Re-running from outside "{0}" will overwrite all the installed files and logs currently there.'.format(INSTALL_PATH) ]
 
         if not confirm_message(*msgs):
             return
@@ -856,8 +875,10 @@ def apply_patches(opts, state):
 
 ####
 
-@register_action('update')
+@register_action('update', auto=True)
 def updade_action(opts, state):
+    """updates system to required version of NSC"""
+
     if not state.update_do:
         message('No update required - nothing to do', '')
         return
@@ -917,8 +938,9 @@ def updade_action(opts, state):
                'Please restart your system and re-run the provisioning scripts installed on "{}".'.format(INSTALL_PATH))
 
 
-@register_action('config')
+@register_action('config', auto=True)
 def config_action(opts, state):
+    """configures system using parameters contained on config file"""
 
     if state.config.notifier is not None:
         with progress('Setting parameters for email notifier...') as p:
@@ -1213,11 +1235,46 @@ def config_action(opts, state):
 
     print(' ')
 
+
+@register_action('restore', auto=True)
+def restore_action(opts, state):
+    """restore configuration from a template"""
+    template = state.config.options.template if opts.template is None else opts.template
+
+    if template is None:
+        message('No template specified - not performing restore', '')
+        return
+
+    if not confirm_message('SYSTEM WILL REBOOT AFTER "RESTORE" IS PERFORMED'):
+        return
+
+    with progress('Performing restore from template "{0}"...'.format(template)) as p:
+        res = state.api.nsc.archive.upload(template)
+        p.message('+ Archive {client_name} uploaded as {file_name}'.format(**res))
+        state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
+        p.tick()
+
+    print('Restore executed successfully.')
+    print('')
+    print('Press ENTER to continue and reboot the system.')
+
+    sys.stdin.readline()
+
+    state.api.system.shutdown()
+    raise Exit('System will now reboot in 5 seconds.')
+
+
 @register_action('ems')
 def ems_action(opts, state):
+    """registers system on configured EMS server"""
+
     ems_data, ems_lines = '', []
 
     try:
+        if state.config.ems is None:
+            message('+ No EMS configuration on config file - nothing to do')
+            return
+
         with progress('Executing EMS provisioning script...') as p:
 
             if state.config.ems.deref_system_ip_address():
@@ -1299,63 +1356,69 @@ def ems_action(opts, state):
             print()
         raise
 
-@register_action('restore')
-def restore_action(opts, state):
-    template = state.config.options.template if opts.template is None else opts.template
 
-    if template is None:
-        message('No template specified - not performing restore', '')
+@register_action('factory-reset')
+def factory_action(opts, state):
+    """performs factory reset and reboots"""
+
+    if not confirm_message('SYSTEM CONFIGURATION WILL BE REPLACED BY FACTORY DEFAULTS',
+                           'PLEASE MAKE SURE ANY REQUIRED SETTINGS ARE BACKED UP BEFORE PROCEEDING'):
         return
 
-    if not confirm_message('SYSTEM WILL REBOOT AFTER "RESTORE" IS PERFORMED'):
-        return
+    with progress('Performing factory reset..') as p:
+        state.api.system.reset({'type':'factory', 'reset_options': ['network','license']})
 
-    with progress('Performing restore from template "{0}"...'.format(template)) as p:
-        res = state.api.nsc.archive.upload(template)
-        p.message('+ Archive {client_name} uploaded as {file_name}'.format(**res))
-        state.api.nsc.archive.restore(res['file_name'], {'backup_exclude_opts': ['network', 'license', 'rest_api'] })
-        p.tick()
-
-    print('Restore executed successfully.')
-    print('')
-    print('Press ENTER to continue and reboot the system.')
-
-    sys.stdin.readline()
-
-    state.api.system.shutdown()
-    raise Exit('System will now reboot in 5 seconds.')
 
 def run_action(name, action, opts, state):
     message('Running "{}" step...'.format(name), char='>')
     action(opts, state)
 
-@register_action('all')
-def all_actions(opts, state):
-    for name, action in actions.items():
-        if name == 'all':
+@register_action('auto')
+def auto_actions(opts, state):
+    """perform defaults actions"""
+    for name, data in actions.items():
+        if name == 'auto' or not data['auto']:
+            logger.debug('skipping action {} - not automatic'.format(name))
             continue
-        run_action(name, action, opts, state)
+        run_action(name, data['fun'], opts, state)
 
 ####
 
 def main():
-    parser = ArgumentParser(usage='configure.sh [action] [options] -- [request-args]')
+    epilog = [ 'available actions:', '' ]
+
+    maxlen = reduce(lambda r, e: max(r, len(e)), actions.keys(), 0)
+
+    for name, data in actions.items():
+        epilog.append('  {{0:{0}}}{{1}}{{2}}'.format(maxlen+2).format(name,
+            data['fun'].__doc__, ' (auto)' if data['auto'] else ''))
+
+    parser = ArgumentParser(
+        usage='configure.sh [action] [options] -- [request-args]',
+        epilog='\n'.join(epilog),
+        formatter_class=RawDescriptionHelpFormatter)
+
+    parser.add_argument('-v', '--version', action='store_true', default=False, help='show version and exit')
 
     parser.add_argument('-d', '--dump', action='store_true', default=False, help='dump the configuration data and exit')
 
-    parser.add_argument('-n', '--no-patches', action='store_true', default=False, help='do not apply any patches on system')
+    parser.add_argument('-n', '--no-patches', action='store_true', default=False, help='do not apply patches on system (even if required)')
 
-    parser.add_argument('-c', '--copy-update', action='store_true', default=False, help='also copy update package when installing on {}'.format(INSTALL_PATH))
+    parser.add_argument('-c', '--copy-update', action='store_true', default=False, help='also copy update package to {}'.format(INSTALL_PATH))
 
-    parser.add_argument('-f', '--force-apply', action='store_true', default=False, help='apply and restart network even if no changes have been made')
+    parser.add_argument('-f', '--force-apply', action='store_true', default=False, help='always apply and restart network (even if not changed)')
     parser.add_argument('-R', '--no-restart', action='store_true', default=False, help='do not restart the network after configuration')
 
     parser.add_argument('-t', '--template', metavar='FILE', help='use FILE as a template backup package to restore from')
 
-    parser.add_argument('action', nargs='?', default='all', help='action to perform - {} (default: all)'.format(', '.join(actions)))
-    parser.add_argument('args', metavar='request-args', nargs='*', help='arguments passed directly to the "server-request" script.')
+    parser.add_argument('action', nargs='?', default='auto', help='action to perform (default is "auto")')
+    parser.add_argument('args', metavar='request-args', nargs='*', help='arguments to the "server-request" script')
 
     opts = parser.parse_args()
+
+    if opts.version:
+        print(__version__)
+        return 0
 
     logger.debug('arguments: {!s}'.format(opts))
 
@@ -1363,11 +1426,17 @@ def main():
         if opts.action not in actions:
             raise Failure('unknown action: {}'.format(opts.action))
 
+        print('Starting provisioning {}...'.format(__version__))
+        print()
+
+        logger.debug('')
+        logger.debug('starting provisioning {}...'.format(__version__))
+
         if opts.no_restart:
             print("NOTE: Network will not be restarted, changes will not be fully applied until restart!")
             print()
 
-        if opts.action != 'all':
+        if opts.action != 'auto':
             message('Running single step "{}"...'.format(opts.action), char='>')
             print()
 
@@ -1395,7 +1464,7 @@ def main():
         setup_api_key(opts, state)
         apply_patches(opts, state)
 
-        actions[opts.action](opts, state)
+        actions[opts.action]['fun'](opts, state)
 
         print(' ')
         print('All procedures executed successfully!')
