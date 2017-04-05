@@ -298,6 +298,12 @@ def search_object(base, matchfun, errorfun):
 
     raise ObjectNotFound(errorfun())
 
+def assert_get(table, key, errmsg):
+    try:
+        return table[key]
+    except:
+        raise Failure(errmsg)
+
 #######
 
 @attrs(init=False)
@@ -309,8 +315,9 @@ class ConfigIP(object):
     hostname   = attrib(None)
     peerdns    = attrib(None)
     persistent = attrib(None)
+    profiles   = attrib(None)
 
-    def __init__(self, ifname, data):
+    def __init__(self, ifname, data, emsconfig):
         try:
             self.proto     = data['type'].replace('4', '-4', 1).replace('6', '-6', 1)
             self.interface = ifname
@@ -327,6 +334,12 @@ class ConfigIP(object):
                 self.persistent = data['persistant_dhcp']
             else:
                 self.peerdns, self.persistent = None, None
+
+            if data.get('ems', False) and emsconfig is not None:
+                emsconfig['ip'] = ifname
+                emsconfig['macid'] = ifname
+
+            self.profiles = filter(lambda x: len(x)!=0, data.get('profiles', data.get('profile', '')).split(','))
 
         except KeyError as e:
             raise Failure('option "{}" missing on section "{}"'.format(e, ifname))
@@ -458,8 +471,13 @@ class ConfigEMS(object):
     def __init__(self, data, ips):
         try:
             self.server = data['server']
-            self.ip = self.deref_ip_address(data['ip'], ips, "source IP")
             self.current = data['current']
+
+            self.ip, self.macid = None, None
+            self.altmacid, self.mediamacid = None, None
+
+            if 'ip' in data:
+                self.ip = self.deref_ip_address(data['ip'], ips, "source IP")
 
             for (optname, optdesc) in [
                 ('macid',      "MAC address"),
@@ -562,6 +580,7 @@ class Config(object):
     options = attrib(None)
 
     def __init__(self, data, ifaces):
+        ems_data = dict()
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
@@ -573,13 +592,22 @@ class Config(object):
                 ifaces.add(physname)
 
                 for ipdata in cfgdata:
-                    ips.append(ConfigIP(cfgname, ipdata))
+                    ips.append(ConfigIP(cfgname, ipdata, ems_data))
 
                 for ipdata in cfgdata:
                     for routename, routedata in filter((lambda elm: elm[0].startswith('route.')), ipdata.items()):
                         routes.append(ConfigRoute(cfgname, routename[6:], routedata))
             else:
                 raise Failure('configuration error: did you forget the double square brackets on "{}"?'.format(cfgdata))
+
+        ems_section = data.get('ems')
+        if ems_section is not None:
+            ems_data.update(ems_section)
+            self.ems = ConfigEMS(ems_data, ips)
+            logger.debug('EMS configuration: {!s}'.format(self.general))
+        else:
+            logger.debug('No EMS section provided')
+            self.ems = None
 
         self.options = ConfigOptions(data.get('options', dict()))
         logger.debug('Options configuration: {!s}'.format(self.options))
@@ -603,13 +631,6 @@ class Config(object):
             logger.debug('No notifier section provided')
             self.notifier = None
 
-        ems_section = data.get('ems')
-        if ems_section is not None:
-            self.ems = ConfigEMS(ems_section, ips)
-            logger.debug('EMS configuration: {!s}'.format(self.general))
-        else:
-            logger.debug('No EMS section provided')
-            self.ems = None
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
@@ -1008,6 +1029,8 @@ def config_action(opts, state):
     print(' ')
     message('Setting addresses from configuration', char='-')
 
+    ip_obj_rev_map = dict()
+
     for ip_object in state.config.ips:
         if ip_object.interface.find('.') != -1:
             with progress('Configuring VLAN "{}"..'.format(ip_object.interface)) as p:
@@ -1024,7 +1047,7 @@ def config_action(opts, state):
 
                     p.skip('+ VLAN interface {0} already present ({1}), skipping creation..'.format(ip_object.interface, name))
                 except ObjectNotFound as e:
-                    object_name = 'vlan_{}_{}'.format(ip_object.interface, random_bytes())
+                    object_name = ip_object.interface.replace('.', '_') # attempt to maintain a stable interface name
                     state.api.network.interface.create(object_name, dict(ifname=ifname, id=ifnumber))
                     state.changed = True
 
@@ -1044,6 +1067,8 @@ def config_action(opts, state):
                 name, _ = next(search_object(network_ip_vlans_map,
                     lambda x: compare_keys(x, asdict(ip_object), check_fields),
                     lambda: "not found"))
+
+                ip_obj_rev_map[ip_object.address] = name
 
                 validate_fields = ['prefix', 'hostname']
                 validate_changed = False
@@ -1069,7 +1094,45 @@ def config_action(opts, state):
                 postdata = asdict_filter(ip_object, store_fields)
                 # DEBUG print("Creating IP {0} with data: {1}".format(object_name, str(postdata)))
                 state.api.network.ip.create(object_name, postdata)
+                ip_obj_rev_map[ip_object.address] = object_name
                 state.changed = True
+
+    with progress('Remapping profiles with new IP addresses...') as p:
+        for ip_object in state.config.ips:
+            if len(ip_object.profiles) == 0:
+                continue
+
+            for sip_name in ip_object.profiles:
+                sip_obj_name = None
+
+                for profile_name, profile_data in sip_profile_map.items():
+                    if profile_data['display-name'] != sip_name:
+                        continue
+
+                    sip_obj_name = profile_name
+                    break
+                else:
+                    raise Failure('unable to find SIP profile {} on configuration'.format(sip_name))
+
+                sip_address = sip_profile_map[profile_name]['sip-ip']
+                sip_port    = sip_profile_map[profile_name]['sip-port']
+
+                if sip_address == sip_obj_name:
+                    p.message('+ Skipping profile "{}", already bound to IP "{}"...'.format(sip_name, ip_object.address))
+                    continue
+
+                obj_name = assert_get(ip_obj_rev_map, ip_object.address, "could not find IP {} on reverse map".format(ip_object.address))
+
+                # update profile
+                state.api.sip.profile[profile_name].update({'sip-ip': obj_name})
+                p.message('+ Bound profile "{}" to IP "{}" ({})'.format(sip_name, ip_object.address, obj_name))
+
+                # update mappings
+                sip_profile_map[profile_name]['sip-ip'] = obj_name
+
+                sip_ip_port_profiles[sip_address][sip_port].remove(profile_name)
+                sip_ip_port_profiles.setdefault(ip_object.address, dict()).setdefault(sip_port, list()).append(profile_name)
+
 
     with progress('Remapping profiles with IPs to be removed...') as p:
         found = False

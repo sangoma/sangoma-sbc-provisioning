@@ -57,6 +57,8 @@ address="192.168.10.6/30"           # IP address and network prefix.
 "route.EMS" = { addr = "192.168.10.0/30", via = "192.168.10.5" } # route 1. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
 "route.OAM" = { addr = "172.16.0.0/16", via = "192.168.10.5" }   # route 2. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
 
+# profiles = PROFILE1               # Binds SIP profile PROFILE1 to this IP address.
+
 [["eth2.81"]]                       # INTERFACE[.VLANID] This is LAN Port and VLAN settings. SBC will create it if it does not exist.
 type="static4"                      # The protocol family type and which boot-time protocol should be used. Values are static4, dhcp4, static6, dhcp6, slaac6
 address="10.11.1.10/30"             # IP address and network prefix.
@@ -64,6 +66,8 @@ address="10.11.1.10/30"             # IP address and network prefix.
 "route.SSW1" = { addr = "10.11.1.0/30", via = "10.11.1.9" } # route 3. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
 "route.SSW2" = { addr = "10.21.1.0/30", via = "10.11.1.9" } # route 4. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
 "route.CORE" = { addr = "10.11.0.0/16", via = "10.11.1.9" } # route 5. Static routes through this interface. Format is: "route.name={ addr = destination/prefix, via = gateway }"
+
+# ems = true                        # Use this IP for EMS provisioning ("ip" and "macid" option of EMS section need to be removed)
 
 # Global network settings.
 
