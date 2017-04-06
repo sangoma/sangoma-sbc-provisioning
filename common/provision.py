@@ -307,6 +307,26 @@ def assert_get(table, key, errmsg):
 #######
 
 @attrs(init=False)
+class ConfigTrunk(object):
+    name       = attrib(None)
+    realm      = attrib(None)
+    acl        = attrib(None)
+
+    def __init__(self, name, data):
+        try:
+            self.name = name
+
+            if isinstance(data, basestring):
+                self.realm = data
+                self.acl = None
+            else:
+                self.realm = data.get('domain')
+                self.acl = data.get('acl')
+
+        except KeyError as e:
+            raise Failure('option "{}" missing on section "trunks"'.format(e))
+
+@attrs(init=False)
 class ConfigIP(object):
     proto      = attrib(None)
     interface  = attrib(None)
@@ -316,6 +336,20 @@ class ConfigIP(object):
     peerdns    = attrib(None)
     persistent = attrib(None)
     profiles   = attrib(None)
+
+    def decode_multiple(self, result, data):
+        if isinstance(data, basestring):
+            result.extend(map(lambda x: dict(name=x), filter(lambda x: len(x)!=0, data.split(','))))
+
+        elif isinstance(data, dict):
+            result.append(data)
+
+        elif isinstance(data, list):
+            for item in data:
+                self.decode_multiple(result, item)
+
+        elif data is not None:
+            raise Failure('unknown object type for profile data: {}'.format(data.__class__.__name__))
 
     def __init__(self, ifname, data, emsconfig):
         try:
@@ -339,7 +373,8 @@ class ConfigIP(object):
                 emsconfig['ip'] = ifname
                 emsconfig['macid'] = ifname
 
-            self.profiles = filter(lambda x: len(x)!=0, data.get('profiles', data.get('profile', '')).split(','))
+            self.profiles = list()
+            self.decode_multiple(self.profiles, data.get('profiles', data.get('profile')))
 
         except KeyError as e:
             raise Failure('option "{}" missing on section "{}"'.format(e, ifname))
@@ -578,13 +613,14 @@ class Config(object):
     users = attrib(Factory(list))
     notifier = attrib(None)
     options = attrib(None)
+    trunks = attrib(None)
 
     def __init__(self, data, ifaces):
         ems_data = dict()
         ips, routes = list(), list()
         for cfgname, cfgdata in data.items():
             logger.info('loading section "{}"...'.format(cfgname))
-            if cfgname in [ 'global', 'ems', 'users', 'notifier', 'options' ]:
+            if cfgname in [ 'global', 'ems', 'users', 'notifier', 'options', 'trunks' ]:
                 continue
             if isinstance(cfgdata, list):
                 physname = cfgname if cfgname.find('.') == -1 else cfgname[:cfgname.find('.')]
@@ -604,7 +640,7 @@ class Config(object):
         if ems_section is not None:
             ems_data.update(ems_section)
             self.ems = ConfigEMS(ems_data, ips)
-            logger.debug('EMS configuration: {!s}'.format(self.general))
+            logger.debug('EMS configuration: {!s}'.format(self.ems))
         else:
             logger.debug('No EMS section provided')
             self.ems = None
@@ -631,6 +667,14 @@ class Config(object):
             logger.debug('No notifier section provided')
             self.notifier = None
 
+        trunks_section = data.get('trunks')
+        self.trunks = list()
+        if trunks_section is not None:
+            for trunk_name, trunk_data in trunks_section.items():
+                self.trunks.append(ConfigTrunk(trunk_name, trunk_data))
+            logger.debug('Trunks configuration: {!s}'.format(self.trunks))
+        else:
+            logger.debug('No Trunks section provided')
 
         self.ips = ips
         logger.debug('IP configuration: {!s}'.format(self.ips))
@@ -985,6 +1029,7 @@ def config_action(opts, state):
     network_iface_map = retrieve_map(state.api.network.interface, 'Retrieving interfaces configuration...')
     network_route_map = retrieve_map(state.api.network.route,     'Retrieving route configuration...')
     sip_profile_map   = retrieve_map(state.api.sip.profile,       'Retrieving SIP profile configuration...')
+    sip_trunk_map     = retrieve_map(state.api.sip.trunk,         'Retrieving SIP trunk configuration...')
 
     with progress('Validating interface list...') as p:
         missing_ifaces = [ iface for iface in state.ifaces if network_iface_map.get(iface) is None ]
@@ -1097,14 +1142,16 @@ def config_action(opts, state):
                 ip_obj_rev_map[ip_object.address] = object_name
                 state.changed = True
 
-    with progress('Remapping profiles with new IP addresses...') as p:
+    with progress('Remapping and applying new profile configurations...') as p:
         for ip_object in state.config.ips:
             if len(ip_object.profiles) == 0:
                 continue
 
-            for sip_name in ip_object.profiles:
-                sip_obj_name = None
+            for sip_data in ip_object.profiles:
+                sip_name = sip_data['name']
+                sip_media = sip_data.get('media')
 
+                sip_obj_name = None
                 for profile_name, profile_data in sip_profile_map.items():
                     if profile_data['display-name'] != sip_name:
                         continue
@@ -1113,6 +1160,16 @@ def config_action(opts, state):
                     break
                 else:
                     raise Failure('unable to find SIP profile {} on configuration'.format(sip_name))
+
+                if sip_media is not None:
+                    media_data = {
+                        'inbound-media-profile': sip_media, 'outbound-media-profile': sip_media
+                    }
+
+                    p.message('+ Configured media profile to "{}" for profile "{}"'.format(sip_media, sip_name))
+
+                    state.api.sip.profile[profile_name].update(media_data)
+                    sip_profile_map[profile_name].update(media_data)
 
                 sip_address = sip_profile_map[profile_name]['sip-ip']
                 sip_port    = sip_profile_map[profile_name]['sip-port']
@@ -1133,6 +1190,39 @@ def config_action(opts, state):
                 sip_ip_port_profiles[sip_address][sip_port].remove(profile_name)
                 sip_ip_port_profiles.setdefault(ip_object.address, dict()).setdefault(sip_port, list()).append(profile_name)
 
+    sip_acl_cleared = set()
+
+    with progress('Applying new trunk configurations...') as p:
+        for sip_data in state.config.trunks:
+            sip_obj_name = None
+            for trunk_name, trunk_data in sip_trunk_map.items():
+                if trunk_data['display-name'] != sip_data.name:
+                    continue
+
+                sip_obj_name = trunk_name
+                break
+            else:
+                raise Failure('unable to find SIP trunk {} on configuration'.format(sip_data.name))
+
+            if sip_data.realm is not None:
+                domain_data = {'realm': sip_data.realm}
+                state.api.sip.trunk[trunk_name].update(domain_data)
+                sip_trunk_map[trunk_name].update(domain_data)
+                p.message('+ Configured domain "{}" for trunk "{}"'.format(sip_data.realm, sip_data.name))
+
+            if None not in [ sip_data.acl, sip_data.realm ]:
+                if sip_data.acl not in sip_acl_cleared:
+                    for node in state.api.acl.network_list[sip_data.acl].node.keys():
+                        state.api.acl.network_list[sip_data.acl].node.delete(node)
+
+                    p.message('+ Performed initial sanitization of ACL "{}"'.format(sip_data.acl))
+                    sip_acl_cleared.add(sip_data.acl)
+
+                acl_data = { 'policy': 'allow', 'ip-address': sip_data.realm, 'prefix': 32 }
+
+                state.api.acl.network_list[sip_data.acl].node.create('node_{}'.format(random_bytes()), acl_data)
+                p.message('+ ACL "{}" configured to allow "{}" for trunk "{}"'.format(sip_data.acl, sip_data.realm, sip_data.name))
+                p.message('')
 
     with progress('Remapping profiles with IPs to be removed...') as p:
         found = False
