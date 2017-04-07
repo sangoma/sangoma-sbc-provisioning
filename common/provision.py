@@ -191,9 +191,10 @@ class ProgressControl(object):
 
     def tick(self):
         fd = self.kwargs.get('file', sys.stdout)
-        print(ProgressControl.TICKS[self.ticks], end='\r', **self.kwargs)
-        self.ticks = (self.ticks + 1) % len(ProgressControl.TICKS)
-        fd.flush()
+        if os.isatty(fd if isinstance(fd, int) else fd.fileno()):
+            print(ProgressControl.TICKS[self.ticks], end='\r', **self.kwargs)
+            self.ticks = (self.ticks + 1) % len(ProgressControl.TICKS)
+            fd.flush()
 
     def message(self, *msgs):
         message(*msgs)
