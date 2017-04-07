@@ -1,0 +1,1 @@
+webconfig ALL=NOPASSWD: /provisioning/common/run.sh
