@@ -1213,6 +1213,10 @@ def config_action(opts, state):
 
             if None not in [ sip_data.acl, sip_data.realm ]:
                 if sip_data.acl not in sip_acl_cleared:
+
+                    if sip_data.acl not in state.api.acl.network_list.keys():
+                        raise Failure('ACL named "{}" not found in configuration - cannot proceed'.format(sip_data.acl))
+
                     for node in state.api.acl.network_list[sip_data.acl].node.keys():
                         state.api.acl.network_list[sip_data.acl].node.delete(node)
 
@@ -1635,6 +1639,9 @@ def main():
         return 0
 
     except Exception as e:
+        try: sys.stdout.flush()
+        except: pass
+
         excstring = str(e)
         if len(excstring) == 0:
             excstring = 'system/internal error'
