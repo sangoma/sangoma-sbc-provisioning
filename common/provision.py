@@ -1167,10 +1167,10 @@ def config_action(opts, state):
                         'inbound-media-profile': sip_media, 'outbound-media-profile': sip_media
                     }
 
-                    p.message('+ Configured media profile to "{}" for profile "{}"'.format(sip_media, sip_name))
-
                     state.api.sip.profile[profile_name].update(media_data)
                     sip_profile_map[profile_name].update(media_data)
+
+                    p.message('+ Configured media profile to "{}" for profile "{}"'.format(sip_media, sip_name))
 
                 sip_address = sip_profile_map[profile_name]['sip-ip']
                 sip_port    = sip_profile_map[profile_name]['sip-port']
