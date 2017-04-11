@@ -599,9 +599,13 @@ class ConfigNotifier(object):
 
 @attrs(init=False)
 class ConfigOptions(object):
+    max_sessions = attrib(None)
+    sessions_sec = attrib(None)
     template = attrib(None)
 
     def __init__(self, data):
+        self.max_sessions = data.get('max-sessions')
+        self.sessions_sec = data.get('sessions-per-sec')
         self.template = data.get('template')
 
 
@@ -917,13 +921,13 @@ def apply_patches(opts, state):
         for filename in os.listdir(PATCHES_BASE):
             version = PATCH_TABLE.get(filename)
             if version is None:
-                p.message('+ Patch "{}" not found on internal table, skipping...'.format(filename))
+                logger.debug('patch "{}" not found on internal table, skipping...'.format(filename))
                 continue
 
             version = Version(*version)
             logger.debug('comparing versions: {!s} < {!s}'.format(version, state.current_version))
             if version < state.current_version:
-                p.message('+ Patch "{}" not needed - last applicable version is {}'.format(filename, version))
+                logger.debug('patch "{}" not needed - last applicable version is {}'.format(filename, version))
                 continue
 
             statefile = PATCHES_STATE_FMT.format(filename)
@@ -938,6 +942,8 @@ def apply_patches(opts, state):
                 pass
 
             p.message('+ Successfully applied patch "{}"!'.format(filename))
+
+        p.message('+ Done!')
 
 ####
 
@@ -1067,10 +1073,20 @@ def config_action(opts, state):
         lambda x: x['address'] == '127.0.0.1',
         lambda: 'loopback address not found'))
 
-    with progress('Normalizing services configuration..') as p:
+    with progress('Normalizing services and core configuration..') as p:
         for obj in [ state.api.webconfig, state.api.sshd ]:
             obj.configuration['interface'] = 'all'
             p.tick()
+
+        core_config = dict()
+        if state.config.options.max_sessions is not None:
+            core_config['max-sessions'] = state.config.options.max_sessions
+        if state.config.options.sessions_sec is not None:
+            core_config['sessions-per-second'] = state.config.options.sessions_sec
+
+        if len(core_config) != 0:
+            state.api.core.configuration.update(core_config)
+            p.message('+ Applied new core session limits')
 
     print(' ')
     message('Setting addresses from configuration', char='-')

@@ -92,5 +92,8 @@ dns2="8.8.4.4"
 dns3=""
 dns4=""
 
-# [options]                     # Additional provisioning options
+[options]
+max-sessions = 250
+sessions-per-sec = 10
+
 # template="mytemplate.tgz"     # Template file to be restored after EMS registration
